@@ -1,10 +1,9 @@
+data/
 __pycache__/
-*.py[cod]
 .venv/
 venv/
 .idea/
 .vscode/
 .env
 .env.*
-!.env.example
 .streamlit/secrets.toml

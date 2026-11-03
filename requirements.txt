@@ -4,4 +4,5 @@ ultralytics
 opencv-python
 numpy
 pandas
-streamlit
+streamlit>=1.37,<2
+imageio-ffmpeg
