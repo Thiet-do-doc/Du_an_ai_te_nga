@@ -1,0 +1,10 @@
+{
+  "sample_fps": 15,
+  "sequence_length": 30,
+  "sequence_stride": 5,
+  "threshold": 0.8,
+  "confirm_windows": 3,
+  "cooldown_seconds": 10.0,
+  "max_observation_gap_seconds": 1.0,
+  "database": "outputs/demo_alerts.sqlite3"
+}

@@ -1,0 +1,10 @@
+# Chỉ dùng khi triển khai mô-đun thật; demo dùng thư viện chuẩn Python.
+numpy
+pandas
+opencv-python
+ultralytics
+scikit-learn
+torch
+matplotlib
+seaborn
+streamlit
