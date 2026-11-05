@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
@@ -50,7 +51,7 @@ class PipelineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             db_path = Path(directory) / 'alerts.sqlite3'
             AlertStore(db_path).save(event)
-            with sqlite3.connect(db_path) as db:
+            with closing(sqlite3.connect(db_path)) as db:
                 row = db.execute('SELECT source_id,score,model_version FROM alerts').fetchone()
             self.assertEqual(row, ('test', .9, 'mock'))
 

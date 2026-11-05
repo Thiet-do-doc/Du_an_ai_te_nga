@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 
@@ -6,7 +7,7 @@ class AlertStore:
     def __init__(self, path):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.path = path
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db, db:
             db.execute('''CREATE TABLE IF NOT EXISTS alerts (
                 id INTEGER PRIMARY KEY,
                 created_at_utc TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -15,7 +16,7 @@ class AlertStore:
                 model_version TEXT NOT NULL, snapshot_path TEXT)''')
 
     def save(self, event, snapshot_path=None):
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db, db:
             db.execute('''INSERT INTO alerts
                 (source_id,track_id,source_timestamp,score,model_version,snapshot_path)
                 VALUES (?,?,?,?,?,?)''',

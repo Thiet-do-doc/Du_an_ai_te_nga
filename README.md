@@ -56,22 +56,20 @@ Mở [http://localhost:8501](http://localhost:8501) nếu trình duyệt chưa t
 
 **Lần chạy sau:** mở PowerShell trong thư mục dự án và chạy lại lệnh trên. Không cần tạo môi trường hay cài lại thư viện.
 
-### Phân tích video
+### Menu chức năng
 
-1. Chọn tab **Phân tích video**.
-2. Tải video MP4, AVI hoặc MOV, nên dùng đoạn ngắn thấy rõ toàn thân người.
-3. Nhấn **Phân tích video**, chờ kết quả và xem điểm Fall cùng tỷ lệ khung hình phát hiện người.
-4. Nếu không đủ dữ liệu tư thế, thử video có ánh sáng và góc quay tốt hơn.
+Menu dọc bên trái có bốn mục:
 
-Ứng dụng lấy mẫu 32 khung hình trên toàn video và trả một kết quả chung, chưa xác định thời điểm té ngã trong video dài. Video được lưu tạm để phân tích rồi xóa. Giao diện hiện chưa lưu lịch sử hoặc xuất báo cáo.
+- **Giám sát trực tiếp:** nhập `0` cho webcam mặc định, hoặc địa chỉ camera IP, nhấn **Bắt đầu giám sát**. Khi phát hiện dấu hiệu ngã, cảnh báo đỏ xuất hiện phía trên hình ảnh. Từng đoạn camera được lưu cùng kết quả để xem lại. Nhấn **Dừng giám sát** khi xong. Chuyển sang mục khác cũng dừng camera.
+- **Xem lại sự cố:** lọc khoảng ngày, cảnh báo hoặc bản ghi chưa kiểm tra; phát lại, tải video và đánh dấu đã kiểm tra.
+- **Thống kê an toàn:** xem số đoạn đã phân tích, cảnh báo, cảnh báo chưa kiểm tra, dữ liệu chưa đủ; xem biểu đồ theo ngày và tải báo cáo CSV.
+- **Tải video lên:** chọn MP4, AVI hoặc MOV, nhấn **Phân tích và lưu kết quả**. Video và kết quả được lưu để xem lại.
 
-### Webcam trực tiếp
+Webcam thuộc máy đang chạy Python, không phải webcam trình duyệt từ xa. Giám sát hoạt động khi trang đang mở, không phải dịch vụ chạy nền. Mỗi đoạn camera gồm 16 khung hình lấy theo tốc độ xử lý; khi phân tích, ứng dụng lấy mẫu thành 32 bước. Cảnh báo xuất hiện sau khi đoạn ghi hình được phân tích, không phải ngay lập tức ở từng khung hình. CPU chậm có thể làm tăng độ trễ. Chưa có gửi email/SMS.
 
-1. Chọn tab **Webcam trực tiếp** và nhấn **Bật webcam**.
-2. Đứng trong khung hình để camera thấy toàn thân, chờ thu thập dữ liệu.
-3. Nhấn **Tắt webcam** trước khi đóng ứng dụng.
+Ứng dụng lấy mẫu 32 khung hình trên toàn video tải lên và trả một kết quả chung; nên dùng video ngắn. Một cảnh báo trong thống kê tương ứng một đoạn video, không phải một sự cố độc lập. Các đoạn liên tiếp có thể cùng ghi nhận một lần ngã.
 
-Webcam hiện dùng DirectShow của **Windows**, lấy camera mặc định có chỉ số `0` trên **máy chạy Python**. Khi truy cập từ máy khác, ứng dụng không lấy webcam của trình duyệt máy đó. Cảnh báo trên giao diện kích hoạt sau 3 dự đoán Fall liên tiếp; chưa có gửi email/SMS.
+Video và lịch sử được lưu trên máy chạy ứng dụng trong `data/` (SQLite: `data/history.db`), không đưa lên GitHub. Muốn chuyển lịch sử sang máy khác cần sao chép cả cơ sở dữ liệu lẫn video và cập nhật đường dẫn video nếu vị trí thư mục thay đổi. Các đoạn ghi hình được giữ lại và sẽ tăng dung lượng ổ đĩa theo thời gian.
 
 ## 5. Cấu trúc chính
 

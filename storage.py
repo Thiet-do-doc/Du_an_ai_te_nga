@@ -2,18 +2,24 @@ from pathlib import Path
 import sqlite3
 from datetime import datetime
 import uuid
+from contextlib import contextmanager
 
 ROOT = Path(__file__).resolve().parent / 'data'
 
 
+@contextmanager
 def connect():
     ROOT.mkdir(exist_ok=True)
     db = sqlite3.connect(ROOT / 'history.db')
-    db.row_factory = sqlite3.Row
-    db.execute('''CREATE TABLE IF NOT EXISTS analyses
-        (id TEXT PRIMARY KEY, created TEXT, source TEXT, video TEXT,
-         label TEXT, score REAL, coverage REAL, reviewed INTEGER DEFAULT 0)''')
-    return db
+    try:
+        db.row_factory = sqlite3.Row
+        with db:
+            db.execute('''CREATE TABLE IF NOT EXISTS analyses
+                (id TEXT PRIMARY KEY, created TEXT, source TEXT, video TEXT,
+                 label TEXT, score REAL, coverage REAL, reviewed INTEGER DEFAULT 0)''')
+            yield db
+    finally:
+        db.close()
 
 
 def save_result(path, source, result):
