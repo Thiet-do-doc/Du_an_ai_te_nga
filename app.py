@@ -1,206 +1,747 @@
-import uuid
-from datetime import date
+
+import tempfile
 from pathlib import Path
 
 import cv2
-import imageio_ffmpeg
-import pandas as pd
 import streamlit as st
 
-from storage import ROOT, records, save_result, mark_reviewed
+from predict import DEVICE, FallPredictor
+from webcam import WebcamAnalyzer
 
-st.set_page_config(page_title='An Tâm • Giám sát an toàn', page_icon='◉', layout='wide')
-st.markdown('''<style>
-.block-container {padding-top:2.2rem; max-width:1400px; padding-bottom:3rem}
-h1 {font-size:2rem!important; letter-spacing:-.04em} h2 {font-size:1.4rem!important}
-[data-testid="stMetric"] {background:white; border:1px solid #E2E8EF; border-radius:14px; padding:18px}
-[data-testid="stSidebar"] {border-right:1px solid #E2E8EF}
-.stButton button, .stDownloadButton button {border-radius:9px; min-height:42px}
-[data-testid="stCaptionContainer"] {color:#536577}
-</style>''', unsafe_allow_html=True)
+
+# ============================================
+# 1. CẤU HÌNH TRANG
+# ============================================
+
+st.set_page_config(
+    page_title="FallGuard AI | Phát hiện té ngã",
+    page_icon="🩵",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+
+# ============================================
+# 2. THIẾT KẾ GIAO DIỆN TRẮNG - XANH NHẠT
+# ============================================
+
+st.markdown(
+    """
+    <style>
+      :root {
+        color-scheme: light;
+      }
+
+      .stApp {
+        background: #f5fbff;
+        color: #17324d;
+      }
+
+      [data-testid="stHeader"] {
+        background: rgba(245, 251, 255, 0.92);
+      }
+
+      [data-testid="stSidebar"] {
+        background: #e9f6ff;
+        border-right: 1px solid #d8ebf8;
+      }
+
+      [data-testid="stSidebar"] * {
+        color: #214562;
+      }
+
+      .block-container {
+        padding-top: 1.7rem;
+        padding-bottom: 3rem;
+        max-width: 1240px;
+      }
+
+      h1, h2, h3, p, label {
+        color: #17324d;
+      }
+
+      /* Tiêu đề chính */
+
+      .hero {
+        background: linear-gradient(
+          110deg,
+          #ffffff 0%,
+          #e3f4ff 100%
+        );
+        border: 1px solid #cfe8fa;
+        border-radius: 22px;
+        padding: 26px 30px;
+        margin-bottom: 20px;
+        box-shadow: 0 6px 24px rgba(48, 111, 153, 0.06);
+      }
+
+      .hero .eyebrow {
+        color: #258ac2;
+        font-size: 0.86rem;
+        letter-spacing: 0.1em;
+        font-weight: 700;
+      }
+
+      .hero h1 {
+        margin: 0.45rem 0;
+        color: #16466b;
+        font-size: clamp(1.6rem, 2.8vw, 2.35rem);
+      }
+
+      .hero p {
+        margin: 0;
+        color: #56768f;
+        font-size: 0.98rem;
+      }
+
+      /* Tiêu đề từng chức năng */
+
+      .section-title {
+        font-weight: 750;
+        font-size: 1.28rem;
+        color: #16466b;
+        margin: 0.5rem 0 1rem;
+      }
+
+      .hint {
+        color: #648298;
+        font-size: 0.92rem;
+        margin: 0 1rem 1rem 0;
+      }
+
+      /* Ô thông tin */
+
+      .info-tile {
+        background: white;
+        border: 1px solid #dbeefa;
+        border-radius: 15px;
+        padding: 14px 18px;
+        min-height: 90px;
+      }
+
+      .info-tile strong {
+        display: block;
+        color: #174a70;
+        font-size: 1.1rem;
+        margin-top: 4px;
+      }
+
+      .info-tile small {
+        color: #6b899e;
+        font-size: 0.78rem;
+      }
+
+      /* Metric */
+
+      div[data-testid="stMetric"] {
+        background: #ffffff;
+        border: 1px solid #d9ebf9;
+        border-radius: 15px;
+        padding: 12px 17px;
+      }
+
+      div[data-testid="stMetricLabel"] {
+        color: #527994;
+      }
+
+      div[data-testid="stMetricValue"] {
+        color: #164e77;
+      }
+
+      /* Tab */
+
+      div[data-baseweb="tab-list"] {
+        gap: 10px;
+        background: #e8f5ff;
+        padding: 8px;
+        border-radius: 14px;
+      }
+
+      button[data-baseweb="tab"] {
+        border-radius: 10px;
+        color: #4c7797;
+        font-weight: 650;
+      }
+
+      button[data-baseweb="tab"][aria-selected="true"] {
+        background: white;
+        color: #0875b0;
+      }
+
+      /* Nút bấm */
+
+      div.stButton > button[kind="primary"] {
+        background: #258ec6;
+        color: white;
+        border: 1px solid #258ec6;
+        border-radius: 10px;
+        font-weight: 700;
+      }
+
+      div.stButton > button[kind="primary"]:hover {
+        background: #1875a8;
+        border-color: #1875a8;
+      }
+
+      div.stButton > button[kind="secondary"] {
+        background: #ffffff;
+        color: #2877a4;
+        border: 1px solid #c5e5f7;
+        border-radius: 10px;
+      }
+
+      /* Vùng tải video */
+
+      [data-testid="stFileUploader"] {
+        background: #ffffff;
+        border: 1px solid #d2e9f8;
+        border-radius: 15px;
+        padding: 12px;
+      }
+
+      /* CẢNH BÁO MÀU ĐỎ */
+
+      .alert-danger {
+        background: #fff0f1;
+        border: 2px solid #ed4c58;
+        border-radius: 14px;
+        padding: 17px 19px;
+        color: #a91425;
+        font-weight: 800;
+        margin-top: 12px;
+      }
+
+      /* Trạng thái bình thường */
+
+      .alert-safe {
+        background: #edf9f7;
+        border: 1px solid #bce6da;
+        border-radius: 14px;
+        padding: 15px 18px;
+        color: #176655;
+        font-weight: 700;
+        margin-top: 12px;
+      }
+
+      /* Đang xác nhận */
+
+      .alert-wait {
+        background: #fff9ed;
+        border: 1px solid #ffe0a6;
+        border-radius: 14px;
+        padding: 15px 18px;
+        color: #91600b;
+        font-weight: 700;
+        margin-top: 12px;
+      }
+
+      .footer {
+        font-size: 0.82rem;
+        color: #7893a6;
+        margin-top: 1.3rem;
+      }
+
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# ============================================
+# 3. TẢI MÔ HÌNH
+# ============================================
 
 @st.cache_resource
-def predictor():
-    from predict import FallPredictor
+def load_predictor():
     return FallPredictor()
 
 
-def result_message(result):
-    if result['fall_score'] is None:
-        st.warning('Chưa đủ dữ liệu tư thế để kết luận. Hãy kiểm tra góc quay và ánh sáng.')
-    elif result['label'] == 'Fall':
-        st.error('Phát hiện dấu hiệu té ngã • Cần kiểm tra')
-    else:
-        st.success('Không phát hiện dấu hiệu té ngã trong đoạn đã phân tích.')
-    a, b = st.columns(2)
-    a.metric('Điểm dự đoán té ngã', '—' if result['fall_score'] is None else f"{result['fall_score']:.1%}")
-    b.metric('Khung hình có dữ liệu người', f"{result['valid_frame_ratio']:.0%}")
+# ============================================
+# 4. HIỂN THỊ TRẠNG THÁI
+# ============================================
+
+def status_card(kind, text):
+    styles = {
+        "danger": "alert-danger",
+        "safe": "alert-safe",
+        "wait": "alert-wait"
+    }
+
+    st.markdown(
+        f'<div class="{styles[kind]}">{text}</div>',
+        unsafe_allow_html=True
+    )
 
 
-def stop_camera():
-    capture = st.session_state.pop('capture', None)
-    if capture is not None:
-        capture.release()
-    st.session_state['running'] = False
-    st.session_state.pop('frames', None)
+# ============================================
+# 5. QUẢN LÝ WEBCAM
+# ============================================
 
+def close_camera():
+    camera = st.session_state.get("camera")
+
+    if camera is not None:
+        camera.release()
+
+    st.session_state.camera = None
+    st.session_state.analyzer = None
+    st.session_state.camera_active = False
+
+
+for key, initial in {
+    "camera_active": False,
+    "camera": None,
+    "analyzer": None,
+}.items():
+    if key not in st.session_state:
+        st.session_state[key] = initial
+
+
+# ============================================
+# 6. HEADER - TIÊU ĐỀ CHÍNH
+# ============================================
+
+st.markdown(
+    """
+    <div class="hero">
+      <div class="eyebrow">
+        AI-POWERED SAFETY MONITORING
+      </div>
+
+      <h1>
+        🩵 HỆ THỐNG AI PHÁT HIỆN TÉ NGÃ
+      </h1>
+
+      <p>
+        Phân tích tư thế con người qua video và webcam
+        bằng YOLO11n-Pose kết hợp LSTM.
+      </p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# ============================================
+# 7. SIDEBAR - THÔNG TIN HỆ THỐNG
+# ============================================
 
 with st.sidebar:
-    st.title('◉ An Tâm')
-    st.caption('HỆ THỐNG GIÁM SÁT AN TOÀN')
-    page = st.radio('Chức năng', ['Giám sát trực tiếp', 'Xem lại sự cố', 'Báo cáo & thống kê', 'Tải video lên'], label_visibility='collapsed')
+    st.markdown("## 🩵 FallGuard AI")
+
+    st.caption("Bảng điều khiển hệ thống")
+
     st.divider()
-    st.caption('Dữ liệu được lưu trên máy chạy ứng dụng.')
-    st.caption('AI hỗ trợ phát hiện dấu hiệu té ngã. Cần người kiểm tra lại cảnh báo.')
 
-if page != 'Giám sát trực tiếp' and st.session_state.get('running'):
-    stop_camera()
+    st.markdown("**Mô hình**")
 
-st.title(page)
+    st.write("🎯 YOLO11n-Pose")
+    st.write("🧠 LSTM – 2 tầng, hidden size 64")
+    st.write("📐 Đầu vào – 32 × 51")
+    st.write(f"💻 Thiết bị – {DEVICE}")
 
-if page == 'Tải video lên':
-    st.caption('Chọn video, phân tích và lưu kết quả để xem lại bất cứ lúc nào.')
-    with st.container(border=True):
-        uploaded = st.file_uploader('Video cần kiểm tra', type=['mp4', 'avi', 'mov'])
-        if uploaded:
-            st.video(uploaded)
-            upload_key = (uploaded.name, uploaded.size)
-            if st.session_state.get('upload_key') != upload_key:
-                st.session_state.pop('upload_result', None)
-                st.session_state['upload_key'] = upload_key
-            if st.button('Phân tích và lưu kết quả', type='primary'):
-                ROOT.mkdir(exist_ok=True)
-                path = ROOT / (uuid.uuid4().hex + Path(uploaded.name).suffix.lower())
-                try:
-                    path.write_bytes(uploaded.getvalue())
-                    with st.spinner('Đang phân tích video…'):
-                        result = predictor().predict_video(path)
-                        save_result(path, uploaded.name, result)
-                    st.session_state['upload_result'] = result
-                    st.success('Đã lưu video và kết quả vào lịch sử.')
-                except Exception as exc:
-                    path.unlink(missing_ok=True)
-                    st.error(f'Không thể phân tích video: {exc}')
-            if 'upload_result' in st.session_state:
-                result_message(st.session_state['upload_result'])
+    st.divider()
 
-elif page == 'Giám sát trực tiếp':
-    st.caption('Kết nối camera để theo dõi. Mỗi đoạn 32 khung hình được phân tích liên tục.')
-    with st.container(border=True):
-        source = st.text_input('Nguồn camera', value='0', help='0 là webcam trên máy chạy ứng dụng. Có thể nhập địa chỉ RTSP hoặc HTTP của camera IP.', disabled=st.session_state.get('running', False))
-        st.caption('Webcam là camera của máy chủ chạy Streamlit, không phải camera của trình duyệt từ xa.')
-        left, right = st.columns(2)
-        start = left.button('Bắt đầu giám sát', type='primary', disabled=st.session_state.get('running', False), use_container_width=True)
-        if right.button('Dừng giám sát', disabled=not st.session_state.get('running', False), use_container_width=True):
-            stop_camera()
-        if start:
+    st.markdown("**Nguyên tắc dự đoán**")
+
+    st.write("🟢 ADL: điểm Fall dưới 50%")
+    st.write("🔴 Fall: điểm Fall từ 50%")
+
+    st.caption(
+        "Webcam yêu cầu 3 dự đoán Fall liên tiếp "
+        "trước khi phát cảnh báo."
+    )
+
+
+# ============================================
+# 8. CÁC THẺ THÔNG TIN
+# ============================================
+
+p1, p2, p3 = st.columns(3)
+
+with p1:
+    st.markdown(
+        """
+        <div class="info-tile">
+            <small>CÔNG NGHỆ</small>
+            <strong>YOLO-Pose + LSTM</strong>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+with p2:
+    st.markdown(
+        """
+        <div class="info-tile">
+            <small>ĐẦU VÀO MÔ HÌNH</small>
+            <strong>32 frame × 51 đặc trưng</strong>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+with p3:
+    st.markdown(
+        """
+        <div class="info-tile">
+            <small>CHẾ ĐỘ</small>
+            <strong>Video MP4 / Webcam</strong>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+st.write("")
+
+
+# ============================================
+# 9. TẠO HAI TAB CHỨC NĂNG
+# ============================================
+
+tab_video, tab_camera = st.tabs([
+    "📁 Phân tích video",
+    "📷 Webcam trực tiếp"
+])
+
+
+# ============================================
+# TAB 1 - PHÂN TÍCH VIDEO MP4
+# ============================================
+
+with tab_video:
+
+    st.markdown(
+        '<div class="section-title">'
+        '📁 Phân tích video tải lên'
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+    st.markdown(
+        '<p class="hint">'
+        'Tải video lên để nhận kết quả Fall / ADL. '
+        'Video hiển thị ở kích thước gọn, căn giữa trang.'
+        '</p>',
+        unsafe_allow_html=True
+    )
+
+    uploaded_file = st.file_uploader(
+        "Chọn video MP4, AVI hoặc MOV",
+        type=["mp4", "avi", "mov"]
+    )
+
+    if uploaded_file is not None:
+
+        # Video nhỏ bằng 50% vùng hiển thị
+        left, middle, right = st.columns([1, 2, 1])
+
+        with middle:
+            st.video(uploaded_file)
+
+        # Nút phân tích căn giữa
+        btn_l, btn_center, btn_r = st.columns(
+            [2, 1.5, 2]
+        )
+
+        with btn_center:
+            analyze = st.button(
+                "🔍 Phân tích video",
+                type="primary",
+                use_container_width=True
+            )
+
+        if analyze:
+            temp_path = None
+
             try:
-                with st.spinner('Đang kết nối và tải mô hình…'):
-                    predictor()
-                    cap = cv2.VideoCapture(int(source) if source.isdigit() else source)
-                    if not cap.isOpened():
-                        cap.release()
-                        raise ValueError('Không kết nối được camera. Kiểm tra nguồn và quyền truy cập.')
-                    st.session_state.update(capture=cap, running=True, frames=[], last_result=None)
-            except Exception as exc:
-                st.error(str(exc))
+                with tempfile.NamedTemporaryFile(
+                    delete=False,
+                    suffix=Path(uploaded_file.name).suffix
+                ) as tmp:
 
-    @st.fragment(run_every=0.2 if st.session_state.get('running') else None)
-    def live_view():
-        if not st.session_state.get('running'):
-            st.info('Camera đang dừng. Chọn nguồn rồi nhấn Bắt đầu giám sát.')
-            return
-        ok, frame = st.session_state.capture.read()
-        if not ok:
-            stop_camera()
-            st.error('Mất kết nối camera. Nhấn Dừng giám sát hoặc tải lại trang để kết nối lại.')
-            return
-        st.success('Đang giám sát • Camera đã kết nối')
-        st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), use_container_width=True)
-        st.session_state.frames.append(frame)
-        if len(st.session_state.frames) >= 32:
-            frames = st.session_state.frames
-            st.session_state.frames = []
-            ROOT.mkdir(exist_ok=True)
-            path = ROOT / (uuid.uuid4().hex + '.mp4')
-            writer = imageio_ffmpeg.write_frames(str(path), (frame.shape[1], frame.shape[0]), fps=5, codec='libx264', pix_fmt_in='bgr24', macro_block_size=1)
-            try:
-                writer.send(None)
-                for item in frames:
-                    writer.send(item.tobytes())
-                writer.close()
-                result = predictor().predict_video(path)
-                save_result(path, 'Camera trực tiếp', result)
-                st.session_state.last_result = result
-            except Exception as exc:
-                writer.close()
-                path.unlink(missing_ok=True)
-                stop_camera()
-                st.error(f'Giám sát đã dừng: {exc}')
-        if st.session_state.get('last_result'):
-            result_message(st.session_state.last_result)
-        else:
-            st.caption('Đang thu thập đủ 32 khung hình cho lần phân tích đầu tiên…')
-    live_view()
+                    tmp.write(uploaded_file.getvalue())
+                    temp_path = Path(tmp.name)
 
-else:
-    rows = records()
-    st.caption('Kết quả thực tế từ video tải lên và các đoạn camera đã phân tích.')
-    if not rows:
-        st.info('Chưa có dữ liệu. Hãy bắt đầu giám sát hoặc tải video lên để phân tích.')
-    else:
-        df = pd.DataFrame(rows)
-        df['day'] = pd.to_datetime(df['created']).dt.date
-        a, b = st.columns(2)
-        begin = a.date_input('Từ ngày', value=df['day'].min())
-        end = b.date_input('Đến ngày', value=date.today())
-        if begin > end:
-            st.warning('Ngày bắt đầu phải trước hoặc bằng ngày kết thúc.')
-            st.stop()
-        df = df[(df.day >= begin) & (df.day <= end)]
-        if page == 'Xem lại sự cố':
-            choice = st.selectbox('Hiển thị', ['Cảnh báo té ngã', 'Chưa đủ dữ liệu', 'Tất cả kết quả'])
-            if choice == 'Cảnh báo té ngã':
-                df = df[df.label == 'Fall']
-            elif choice == 'Chưa đủ dữ liệu':
-                df = df[df.score.isna()]
-            if df.empty:
-                st.info('Không có kết quả phù hợp với bộ lọc.')
-            else:
-                choices = {row['id']: row for row in df.to_dict('records')}
-                selected = st.selectbox('Chọn bản ghi để xem lại', list(choices), format_func=lambda key: f"{choices[key]['created'].replace('T', ' ')} • {choices[key]['source']} • {'Đã xem' if choices[key]['reviewed'] else 'Chưa xem'}")
-                row = choices[selected]
-                with st.container(border=True):
-                    video = Path(row['video'])
-                    if video.is_file():
-                        st.video(str(video))
-                        st.download_button('Tải đoạn video', video.read_bytes(), file_name=video.name)
+                with st.spinner(
+                    "Đang trích xuất keypoint và dự đoán..."
+                ):
+                    result = (
+                        load_predictor()
+                        .predict_video(temp_path)
+                    )
+
+                st.markdown(
+                    "#### 📊 Kết quả phân tích"
+                )
+
+                st.metric(
+                    "Tỷ lệ frame phát hiện người",
+                    f"{result['valid_frame_ratio'] * 100:.1f}%"
+                )
+
+                if result["fall_score"] is None:
+
+                    status_card(
+                        "wait",
+                        "⚠️ Không đủ dữ liệu tư thế để dự đoán."
+                    )
+
+                else:
+                    score = result["fall_score"]
+
+                    st.metric(
+                        "Điểm dự đoán Fall",
+                        f"{score * 100:.2f}%"
+                    )
+
+                    if result["label"] == "Fall":
+
+                        status_card(
+                            "danger",
+                            "🚨 CẢNH BÁO: "
+                            "PHÁT HIỆN DẤU HIỆU TÉ NGÃ!"
+                        )
+
                     else:
-                        st.warning('Tệp video không còn trên máy lưu trữ.')
-                    result_message(dict(fall_score=row['score'], label=row['label'], valid_frame_ratio=row['coverage']))
-                    if row['reviewed']:
-                        st.success('Đã kiểm tra bản ghi này.')
-                    elif st.button('Đánh dấu đã kiểm tra', type='primary'):
-                        mark_reviewed(selected)
+
+                        status_card(
+                            "safe",
+                            "✅ Không phát hiện té ngã trong video."
+                        )
+
+            except Exception as exc:
+
+                st.error(
+                    f"Không thể phân tích video: {exc}"
+                )
+
+            finally:
+
+                if temp_path is not None:
+                    temp_path.unlink(missing_ok=True)
+
+
+# ============================================
+# TAB 2 - WEBCAM TRỰC TIẾP
+# ============================================
+
+with tab_camera:
+
+    st.markdown(
+        '<div class="section-title">'
+        '📷 Giám sát webcam trực tiếp'
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+    st.markdown(
+        '<p class="hint">'
+        'Camera trên laptop chạy ứng dụng sẽ được '
+        'sử dụng để phân tích chuyển động theo thời gian.'
+        '</p>',
+        unsafe_allow_html=True
+    )
+
+    action_l, action_c, action_r = st.columns(
+        [2, 1.4, 2]
+    )
+
+    with action_c:
+
+        if not st.session_state.camera_active:
+
+            if st.button(
+                "▶ Bật webcam",
+                type="primary",
+                use_container_width=True
+            ):
+
+                cam = cv2.VideoCapture(
+                    0,
+                    cv2.CAP_DSHOW
+                )
+
+                if not cam.isOpened():
+
+                    cam.release()
+
+                    st.error(
+                        "Không mở được webcam. "
+                        "Kiểm tra quyền truy cập camera "
+                        "và ứng dụng khác đang sử dụng."
+                    )
+
+                else:
+
+                    cam.set(
+                        cv2.CAP_PROP_FRAME_WIDTH,
+                        640
+                    )
+
+                    cam.set(
+                        cv2.CAP_PROP_FRAME_HEIGHT,
+                        480
+                    )
+
+                    try:
+
+                        analyzer = WebcamAnalyzer(
+                            load_predictor()
+                        )
+
+                        st.session_state.camera = cam
+                        st.session_state.analyzer = analyzer
+                        st.session_state.camera_active = True
+
                         st.rerun()
+
+                    except Exception:
+                        cam.release()
+                        raise
+
         else:
-            fall = df[df.label == 'Fall']
-            a, b, c, d = st.columns(4)
-            a.metric('Đoạn đã phân tích', len(df))
-            b.metric('Cảnh báo té ngã', len(fall))
-            c.metric('Cảnh báo chưa kiểm tra', int((fall.reviewed == 0).sum()))
-            d.metric('Chưa đủ dữ liệu', int(df.score.isna().sum()))
-            st.caption('Một cảnh báo tương ứng một đoạn video, không phải một sự cố hoặc một người riêng biệt.')
-            if df.empty:
-                st.info('Không có dữ liệu trong khoảng ngày đã chọn.')
+
+            if st.button(
+                "■ Tắt webcam",
+                use_container_width=True
+            ):
+
+                close_camera()
+                st.rerun()
+
+
+    # ========================================
+    # HIỂN THỊ CAMERA THEO THỜI GIAN
+    # ========================================
+
+    @st.fragment(run_every=0.3)
+    def show_camera():
+
+        if not st.session_state.camera_active:
+
+            st.info(
+                "📷 Webcam đang tắt. "
+                "Nhấn Bật webcam để bắt đầu."
+            )
+            return
+
+        cam = st.session_state.camera
+        analyzer = st.session_state.analyzer
+
+        try:
+
+            ok, frame = cam.read()
+
+            if not ok:
+
+                close_camera()
+
+                st.error(
+                    "Không đọc được khung hình. "
+                    "Webcam đã được đóng."
+                )
+                return
+
+            # YOLO-Pose + LSTM
+            rgb_frame = analyzer.process_frame(frame)
+
+            # Camera nhỏ, căn giữa
+            left, mid, right = st.columns([1, 3, 1])
+
+            with mid:
+
+                st.image(
+                    rgb_frame,
+                    channels="RGB",
+                    use_container_width=True
+                )
+
+            st.markdown(
+                "#### 📊 Trạng thái nhận diện"
+            )
+
+            col_a, col_b = st.columns(2)
+
+            with col_a:
+
+                st.metric(
+                    "Tỷ lệ frame phát hiện người",
+                    f"{analyzer.valid_ratio * 100:.1f}%"
+                )
+
+            with col_b:
+
+                if analyzer.fall_score is None:
+                    score_str = "Chưa có"
+
+                else:
+                    score_str = (
+                        f"{analyzer.fall_score * 100:.2f}%"
+                    )
+
+                st.metric(
+                    "Điểm dự đoán Fall",
+                    score_str
+                )
+
+            # =================================
+            # HIỂN THỊ CẢNH BÁO
+            # =================================
+
+            if analyzer.fall_score is None:
+
+                status_card(
+                    "wait",
+                    "⌛ " + analyzer.label
+                )
+
+            elif analyzer.alert_active:
+
+                status_card(
+                    "danger",
+                    "🚨 CẢNH BÁO ĐỎ: "
+                    "NGHI NGỜ TÉ NGÃ!"
+                )
+
+            elif analyzer.label == "Fall":
+
+                status_card(
+                    "wait",
+                    "⚠️ Phát hiện dấu hiệu Fall "
+                    "– đang xác nhận..."
+                )
+
             else:
-                st.subheader('Cảnh báo theo ngày')
-                counts = df.assign(alert=(df.label == 'Fall').astype(int)).groupby('day')['alert'].sum()
-                st.bar_chart(counts, color='#16766B')
-                report = df[['created', 'source', 'label', 'score', 'coverage', 'reviewed']].copy()
-                report['label'] = report['label'].replace({'Fall': 'Cảnh báo té ngã', 'ADL': 'Không phát hiện té ngã'})
-                report['reviewed'] = report['reviewed'].map({0: 'Chưa kiểm tra', 1: 'Đã kiểm tra'})
-                report.columns = ['Thời gian', 'Nguồn', 'Kết quả', 'Điểm té ngã', 'Tỷ lệ khung hình có người', 'Trạng thái']
-                st.subheader('Chi tiết phân tích')
-                st.dataframe(report, hide_index=True, use_container_width=True)
-                st.download_button('Tải báo cáo CSV', report.to_csv(index=False).encode('utf-8-sig'), 'bao-cao-an-toan.csv', 'text/csv')
+
+                status_card(
+                    "safe",
+                    "✅ TRẠNG THÁI BÌNH THƯỜNG (ADL)"
+                )
+
+        except Exception as exc:
+
+            close_camera()
+
+            st.error(
+                f"Lỗi webcam: {exc}"
+            )
+
+    show_camera()
+
+
+# ============================================
+# 10. FOOTER
+# ============================================
+
+st.markdown(
+    """
+    <p class="footer">
+      Ứng dụng phục vụ nghiên cứu và trình diễn;
+      không thay thế hệ thống cảnh báo an toàn
+      được kiểm chứng thực tế.
+    </p>
+    """,
+    unsafe_allow_html=True
+)
