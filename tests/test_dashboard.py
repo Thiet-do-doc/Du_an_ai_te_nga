@@ -1,6 +1,7 @@
 import sys
 import io
 from threading import Event
+from concurrent.futures import Future
 import tempfile
 import unittest
 from pathlib import Path
@@ -37,6 +38,17 @@ class DashboardTests(unittest.TestCase):
             app.sidebar.radio[0].set_value(page).run()
             self.assertFalse(app.exception)
             self.assertTrue(any(t.value == page for t in app.title))
+
+    def test_stopped_camera_clears_old_alert(self):
+        app = self.app()
+        app.session_state['last_result'] = dict(label='Fall', fall_score=.99, valid_frame_ratio=1.)
+        app.session_state['alert_until'] = float('inf')
+        app.session_state['camera_session'] = 'old'
+        app.session_state['result_session'] = 'old'
+        app.run()
+        self.assertFalse(app.exception)
+        self.assertFalse(any('aria-live="assertive"' in m.value for m in app.markdown))
+        self.assertIsNone(app.session_state.get('last_result'))
 
     def test_upload_saves_result_and_retains_history(self):
         class Upload(io.BytesIO):
@@ -88,6 +100,7 @@ class DashboardTests(unittest.TestCase):
         with patch('cv2.VideoCapture', return_value=capture), patch.dict(sys.modules, {'predict':SimpleNamespace(FallPredictor=Predictor)}):
             app = self.app()
             next(b for b in app.button if b.label=='Bắt đầu giám sát').click().run()
+            self.assertFalse(any('aria-live="assertive"' in m.value for m in app.markdown))
             for _ in range(16):
                 app.session_state['next_sample_at'] = 0
                 app.run()
@@ -103,6 +116,19 @@ class DashboardTests(unittest.TestCase):
             rows = storage.records()
             self.assertTrue(rows)
             self.assertTrue(Path(rows[0]['video']).is_file())
+            normal = Future()
+            normal.set_result(dict(label='ADL', fall_score=.1, valid_frame_ratio=1.))
+            app.session_state['analysis_future'] = normal
+            app.session_state['analysis_session'] = app.session_state['camera_session']
+            app.run()
+            self.assertFalse(any('aria-live="assertive"' in m.value for m in app.markdown))
+            # A completed result from a previous camera session must be ignored.
+            stale = Future()
+            stale.set_result(dict(label='Fall', fall_score=.99, valid_frame_ratio=1.))
+            app.session_state['analysis_future'] = stale
+            app.session_state['analysis_session'] = 'previous-session'
+            app.run()
+            self.assertFalse(any('aria-live="assertive"' in m.value for m in app.markdown))
             app.sidebar.radio[0].set_value('Xem lại sự cố').run()
             self.assertTrue(capture.released)
             self.assertFalse(app.exception)

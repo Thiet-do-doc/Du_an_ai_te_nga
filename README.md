@@ -60,7 +60,7 @@ Mở [http://localhost:8501](http://localhost:8501) nếu trình duyệt chưa t
 
 Menu dọc bên trái có bốn mục:
 
-- **Giám sát trực tiếp:** nhập `0` cho webcam mặc định, hoặc địa chỉ camera IP, nhấn **Bắt đầu giám sát**. Ngay khi có kết quả phát hiện dấu hiệu ngã, cảnh báo đỏ xuất hiện phía trên hình ảnh, viền camera chuyển đỏ và nền màn hình chuyển hồng nhạt. Cảnh báo giữ ít nhất 10 giây kể từ lần phát hiện gần nhất. Từng đoạn camera được lưu cùng kết quả để xem lại. Nhấn **Dừng giám sát** khi xong. Chuyển sang mục khác cũng dừng camera.
+- **Giám sát trực tiếp:** nhập `0` cho webcam mặc định, hoặc địa chỉ camera IP, nhấn **Bắt đầu giám sát**. Ngay khi có kết quả phát hiện dấu hiệu ngã, cảnh báo đỏ xuất hiện phía trên hình ảnh, viền camera chuyển đỏ và nền màn hình chuyển hồng nhạt. Cảnh báo chỉ áp dụng cho phiên camera hiện tại, tự hết sau 10 giây nếu không được xác nhận lại và tắt ngay khi lượt phân tích tiếp theo là bình thường hoặc không đủ dữ liệu người. Khi dừng hoặc bật lại camera, cảnh báo cũ được xóa. Từng đoạn camera được lưu cùng kết quả để xem lại. Nhấn **Dừng giám sát** khi xong. Chuyển sang mục khác cũng dừng camera.
 - **Xem lại sự cố:** lọc khoảng ngày, cảnh báo hoặc bản ghi chưa kiểm tra; phát lại, tải video và đánh dấu đã kiểm tra.
 - **Thống kê an toàn:** xem số đoạn đã phân tích, cảnh báo, cảnh báo chưa kiểm tra, dữ liệu chưa đủ; xem biểu đồ theo ngày và tải báo cáo CSV.
 - **Tải video lên:** chọn MP4, AVI hoặc MOV, nhấn **Phân tích và lưu kết quả**. Video và kết quả được lưu để xem lại.

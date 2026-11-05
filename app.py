@@ -69,6 +69,8 @@ def stop_camera():
     st.session_state.pop('frames', None)
     st.session_state.pop('frame_times', None)
     st.session_state.pop('alert_until', None)
+    for key in ('last_result', 'camera_session', 'result_session', 'analysis_session'):
+        st.session_state.pop(key, None)
 
 
 def compact_video(video):
@@ -121,6 +123,8 @@ if page == 'Tải video lên':
                 result_message(st.session_state['upload_result'])
 
 elif page == 'Giám sát trực tiếp':
+    if not st.session_state.get('running'):
+        stop_camera()
     st.caption('Theo dõi hình ảnh trực tiếp và nhận cảnh báo trên màn hình khi có dấu hiệu té ngã.')
     with st.container(border=True):
         source = st.text_input('Nguồn camera', value='0', help='0 là webcam trên máy chạy ứng dụng. Có thể nhập địa chỉ RTSP hoặc HTTP của camera IP.', disabled=st.session_state.get('running', False))
@@ -141,7 +145,7 @@ elif page == 'Giám sát trực tiếp':
                     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
                     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
                     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                    st.session_state.update(capture=cap, running=True, frames=[], frame_times=[], last_result=None, alert_until=0, next_sample_at=0, analysis_future=None, analysis_executor=ThreadPoolExecutor(max_workers=1, thread_name_prefix='fall-analysis'))
+                    st.session_state.update(capture=cap, running=True, frames=[], frame_times=[], last_result=None, alert_until=0, next_sample_at=0, camera_session=uuid.uuid4().hex, result_session=None, analysis_session=None, analysis_future=None, analysis_executor=ThreadPoolExecutor(max_workers=1, thread_name_prefix='fall-analysis'))
                     st.rerun()
             except Exception as exc:
                 st.error(str(exc))
@@ -168,10 +172,15 @@ elif page == 'Giám sát trực tiếp':
         if pending is not None and pending.done():
             st.session_state.analysis_future = None
             try:
-                result = pending.result()
-                st.session_state.last_result = result
-                if result['label'] == 'Fall' and result['fall_score'] is not None:
-                    st.session_state.alert_until = time.monotonic() + 10
+                if st.session_state.get('analysis_session') == st.session_state.get('camera_session'):
+                    result = pending.result()
+                    st.session_state.last_result = result
+                    st.session_state.result_session = st.session_state.camera_session
+                    detected = (result['label'] == 'Fall'
+                                and result['fall_score'] is not None
+                                and result['fall_score'] >= 0.5
+                                and result['valid_frame_ratio'] >= 0.8)
+                    st.session_state.alert_until = time.monotonic() + 10 if detected else 0
             except Exception as exc:
                 stop_camera()
                 st.error(f'Giám sát đã dừng: {exc}')
@@ -193,15 +202,19 @@ elif page == 'Giám sát trực tiếp':
             st.session_state.frame_times = []
             st.session_state.analysis_future = st.session_state.analysis_executor.submit(
                 analyze_clip, frames, timestamps, predictor(), ROOT)
-        alert_active = time.monotonic() < st.session_state.get('alert_until', 0)
+            st.session_state.analysis_session = st.session_state.camera_session
+        current_result = (st.session_state.get('last_result')
+                          if st.session_state.get('result_session') == st.session_state.get('camera_session') else None)
+        alert_active = (current_result is not None and current_result['label'] == 'Fall'
+                        and time.monotonic() < st.session_state.get('alert_until', 0))
         if alert_active:
             with alert_area:
                 st.markdown('<div class="live-alert camera-alert" role="alert" aria-live="assertive"><strong>⚠ CẢNH BÁO TÉ NGÃ</strong>Hãy kiểm tra ngay người trong khu vực camera đang giám sát.</div>', unsafe_allow_html=True)
             frame = frame.copy()
             cv2.rectangle(frame, (0, 0), (frame.shape[1]-1, frame.shape[0]-1), (40, 40, 220), 8)
-        elif st.session_state.get('last_result'):
+        elif current_result and current_result['label'] != 'Fall':
             with alert_area:
-                result_message(st.session_state.last_result)
+                result_message(current_result)
         else:
             st.caption('Đang quan sát chuyển động. Kết quả sẽ xuất hiện sau đoạn ghi hình đầu tiên…')
         image_area.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels='RGB', output_format='JPEG', use_container_width=True)
