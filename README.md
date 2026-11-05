@@ -107,6 +107,24 @@ Kho còn có `main.py`, `src/`, `config/`, `tests/` và `docs/` từ bộ khung 
 
 Nếu cài thư viện thất bại, kiểm tra Python 3.11 64 bit và Internet. Thư viện hiện chưa được khóa toàn bộ phiên bản. Khi báo lỗi, gửi nội dung lỗi cùng kết quả `python --version` và `.\.venv\Scripts\python.exe -m pip freeze` để đối chiếu môi trường.
 
+## 7. Dữ liệu đã xử lý và video gốc
+
+Kho Git có sẵn thư mục `data/processed/`, gồm các tệp metadata, danh sách chia tập `train.csv`, `val.csv`, `test.csv` và đặc trưng tư thế `.npy` trong `pose_features/`. Clone kho sẽ tải cả dữ liệu đã xử lý này. Có thể chạy `python view_npy.py` sau khi cài thư viện để xem đặc trưng của mẫu huấn luyện đầu tiên.
+
+**Video gốc được lưu riêng, không đưa lên GitHub. Link tải Google Drive: chưa được cung cấp.** Người chỉ chạy ứng dụng với mô hình có sẵn không cần tải bộ video huấn luyện.
+
+Khi nhận được bộ video, giải nén để có cấu trúc:
+
+```text
+data/raw/VideoDataset/
+├── ADL/
+└── Fall/
+```
+
+Các tệp CSV hiện có đường dẫn video từ môi trường tạo dữ liệu ban đầu, ví dụ `/content/Fall_Detection_Project/VideoDataset/...`. Nếu dùng CSV để đọc video trên máy khác, cần đổi tiền tố đường dẫn này thành vị trí thực tế của `data/raw/VideoDataset/` trên máy đó. Việc này không cần thiết khi chạy giao diện `app.py` để phân tích video mới hoặc webcam.
+
+Thư mục `data/raw/` tiếp tục bị Git bỏ qua để tránh đưa bộ video dung lượng lớn vào kho mã nguồn.
+
 ## Giới hạn
 
 Mô hình chọn người có khung bao lớn nhất, chưa theo dõi từng người riêng biệt. Kết quả cần người kiểm tra lại. Ứng dụng phục vụ nghiên cứu và trình diễn, không thay thế hệ thống cảnh báo an toàn đã được kiểm chứng.
