@@ -1,14 +1,15 @@
 import uuid
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
 
 import cv2
-import imageio_ffmpeg
 import pandas as pd
 import streamlit as st
 
 from storage import ROOT, records, save_result, mark_reviewed
+from live_processing import analyze_clip
 
 st.set_page_config(page_title='An Tâm • Giám sát an toàn', page_icon='🛡️', layout='wide', initial_sidebar_state='expanded')
 st.markdown("""<style>
@@ -60,6 +61,10 @@ def stop_camera():
     capture = st.session_state.pop('capture', None)
     if capture is not None:
         capture.release()
+    executor = st.session_state.pop('analysis_executor', None)
+    if executor is not None:
+        executor.shutdown(wait=False, cancel_futures=True)
+    st.session_state.pop('analysis_future', None)
     st.session_state['running'] = False
     st.session_state.pop('frames', None)
     st.session_state.pop('frame_times', None)
@@ -133,12 +138,15 @@ elif page == 'Giám sát trực tiếp':
                     if not cap.isOpened():
                         cap.release()
                         raise ValueError('Không kết nối được camera. Kiểm tra nguồn và quyền truy cập.')
-                    st.session_state.update(capture=cap, running=True, frames=[], frame_times=[], last_result=None, alert_until=0)
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                    st.session_state.update(capture=cap, running=True, frames=[], frame_times=[], last_result=None, alert_until=0, next_sample_at=0, analysis_future=None, analysis_executor=ThreadPoolExecutor(max_workers=1, thread_name_prefix='fall-analysis'))
                     st.rerun()
             except Exception as exc:
                 st.error(str(exc))
 
-    @st.fragment(run_every=0.2 if st.session_state.get('running') else None)
+    @st.fragment(run_every=0.05 if st.session_state.get('running') else None)
     def live_view():
         if not st.session_state.get('running'):
             st.info('Camera đang dừng. Chọn nguồn rồi nhấn Bắt đầu giám sát.')
@@ -156,32 +164,35 @@ elif page == 'Giám sát trực tiếp':
         _, media, _ = st.columns([0.275, 0.45, 0.275])
         with media:
             image_area = st.empty()
-        st.session_state.frames.append(frame)
-        st.session_state.frame_times.append(time.monotonic())
-        if len(st.session_state.frames) >= 16:
-            frames = st.session_state.frames
-            timestamps = st.session_state.frame_times
-            fps = max(1, min(60, (len(frames)-1) / max(timestamps[-1]-timestamps[0], 0.001)))
-            st.session_state.frames = []
-            st.session_state.frame_times = []
-            ROOT.mkdir(exist_ok=True)
-            path = ROOT / (uuid.uuid4().hex + '.mp4')
-            writer = imageio_ffmpeg.write_frames(str(path), (frame.shape[1], frame.shape[0]), fps=fps, codec='libx264', pix_fmt_in='bgr24', macro_block_size=1)
+        pending = st.session_state.get('analysis_future')
+        if pending is not None and pending.done():
+            st.session_state.analysis_future = None
             try:
-                writer.send(None)
-                for item in frames:
-                    writer.send(item.tobytes())
-                writer.close()
-                result = predictor().predict_video(path)
+                result = pending.result()
+                st.session_state.last_result = result
                 if result['label'] == 'Fall' and result['fall_score'] is not None:
                     st.session_state.alert_until = time.monotonic() + 10
-                save_result(path, 'Camera trực tiếp', result)
-                st.session_state.last_result = result
             except Exception as exc:
-                writer.close()
-                path.unlink(missing_ok=True)
                 stop_camera()
                 st.error(f'Giám sát đã dừng: {exc}')
+                return
+
+        now = time.monotonic()
+        # Keep only a rolling window of fresh samples while inference is busy.
+        # Preview never waits for encoding/inference and old clips cannot queue up.
+        if now >= st.session_state.next_sample_at:
+            st.session_state.frames.append(frame.copy())
+            st.session_state.frame_times.append(now)
+            st.session_state.frames = st.session_state.frames[-16:]
+            st.session_state.frame_times = st.session_state.frame_times[-16:]
+            st.session_state.next_sample_at = now + 0.2
+        if st.session_state.get('analysis_future') is None and len(st.session_state.frames) >= 16:
+            frames = st.session_state.frames
+            timestamps = st.session_state.frame_times
+            st.session_state.frames = []
+            st.session_state.frame_times = []
+            st.session_state.analysis_future = st.session_state.analysis_executor.submit(
+                analyze_clip, frames, timestamps, predictor(), ROOT)
         alert_active = time.monotonic() < st.session_state.get('alert_until', 0)
         if alert_active:
             with alert_area:
@@ -193,7 +204,7 @@ elif page == 'Giám sát trực tiếp':
                 result_message(st.session_state.last_result)
         else:
             st.caption('Đang quan sát chuyển động. Kết quả sẽ xuất hiện sau đoạn ghi hình đầu tiên…')
-        image_area.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), use_container_width=True)
+        image_area.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels='RGB', output_format='JPEG', use_container_width=True)
     live_view()
 
 else:

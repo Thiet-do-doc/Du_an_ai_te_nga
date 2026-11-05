@@ -1,4 +1,5 @@
 from pathlib import Path
+from threading import RLock
 
 import cv2
 import numpy as np
@@ -14,6 +15,7 @@ SEQ_LEN = 32
 
 class FallPredictor:
     def __init__(self):
+        self._lock = RLock()
         self.pose_model = YOLO(
             str(BASE_DIR / "models" / "yolo11n-pose.pt")
         )
@@ -98,6 +100,11 @@ class FallPredictor:
         return features
 
     def predict_video(self, video_path):
+        # The cached predictor can be used by background cameras and uploads.
+        with self._lock:
+            return self._predict_video(video_path)
+
+    def _predict_video(self, video_path):
         features = self.extract_keypoints(video_path)
 
         if features.shape != (32, 51):

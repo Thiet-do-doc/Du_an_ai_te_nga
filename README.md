@@ -65,7 +65,7 @@ Menu dọc bên trái có bốn mục:
 - **Thống kê an toàn:** xem số đoạn đã phân tích, cảnh báo, cảnh báo chưa kiểm tra, dữ liệu chưa đủ; xem biểu đồ theo ngày và tải báo cáo CSV.
 - **Tải video lên:** chọn MP4, AVI hoặc MOV, nhấn **Phân tích và lưu kết quả**. Video và kết quả được lưu để xem lại.
 
-Webcam thuộc máy đang chạy Python, không phải webcam trình duyệt từ xa. Giám sát hoạt động khi trang đang mở, không phải dịch vụ chạy nền. Mỗi đoạn camera gồm 16 khung hình lấy theo tốc độ xử lý; khi phân tích, ứng dụng lấy mẫu thành 32 bước. Cảnh báo xuất hiện sau khi đoạn ghi hình được phân tích, không phải ngay lập tức ở từng khung hình. CPU chậm có thể làm tăng độ trễ. Chưa có gửi email/SMS.
+Webcam thuộc máy đang chạy Python, không phải webcam trình duyệt từ xa. Giám sát hoạt động khi trang đang mở, không phải dịch vụ chạy nền. Hình camera được cập nhật với nhịp mục tiêu khoảng 20 hình/giây; tốc độ thực tế phụ thuộc máy, camera và trình duyệt. Nhận diện và mã hóa video chạy ở luồng nền, tách khỏi luồng hiển thị. Mỗi đoạn phân tích gồm 16 khung hình lấy mẫu khoảng 5 hình/giây và được lấy mẫu thành 32 bước khi nhận diện. Trong lúc xử lý, ứng dụng chỉ giữ cửa sổ 16 khung hình mới nhất, không xếp hàng video cũ. Cảnh báo xuất hiện sau khi đoạn ghi hình được phân tích, không phải ngay lập tức ở từng khung hình. CPU chậm có thể làm tăng độ trễ. Khi dừng camera, lượt phân tích đã bắt đầu có thể tiếp tục hoàn tất và lưu vào lịch sử. Chưa có gửi email/SMS.
 
 Ứng dụng lấy mẫu 32 khung hình trên toàn video tải lên và trả một kết quả chung; nên dùng video ngắn. Một cảnh báo trong thống kê tương ứng một đoạn video, không phải một sự cố độc lập. Các đoạn liên tiếp có thể cùng ghi nhận một lần ngã.
 

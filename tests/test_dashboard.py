@@ -1,5 +1,6 @@
 import sys
 import io
+from threading import Event
 import tempfile
 import unittest
 from pathlib import Path
@@ -77,6 +78,7 @@ class DashboardTests(unittest.TestCase):
             def isOpened(self): return True
             def read(self): return True, np.zeros((64,64,3), dtype=np.uint8)
             def release(self): self.released = True
+            def set(self, *args): return True
         class Predictor:
             def predict_video(self, path):
                 self_path = Path(path)
@@ -87,8 +89,14 @@ class DashboardTests(unittest.TestCase):
             app = self.app()
             next(b for b in app.button if b.label=='Bắt đầu giám sát').click().run()
             for _ in range(16):
+                app.session_state['next_sample_at'] = 0
+                app.run()
+            future = app.session_state['analysis_future']
+            if future is not None:
+                future.result(timeout=10)
                 app.run()
             self.assertFalse(app.exception)
+
             self.assertTrue(any('CẢNH BÁO TÉ NGÃ' in m.value for m in app.markdown))
             self.assertTrue(any('camera-alert' in m.value and 'aria-live="assertive"' in m.value for m in app.markdown))
             self.assertGreater(app.session_state['alert_until'], 0)
@@ -98,6 +106,50 @@ class DashboardTests(unittest.TestCase):
             app.sidebar.radio[0].set_value('Xem lại sự cố').run()
             self.assertTrue(capture.released)
             self.assertFalse(app.exception)
+
+    def test_preview_keeps_updating_while_analysis_is_blocked(self):
+        entered, release = Event(), Event()
+        class Capture:
+            reads = 0
+            released = False
+            def isOpened(self): return True
+            def set(self, *args): return True
+            def read(self):
+                self.reads += 1
+                return True, np.zeros((64,64,3), dtype=np.uint8)
+            def release(self): self.released = True
+        class Predictor:
+            def predict_video(self, path):
+                entered.set()
+                if not release.wait(10):
+                    raise TimeoutError('Test did not release worker')
+                return dict(label='Fall', fall_score=.96, valid_frame_ratio=1.)
+        camera = Capture()
+        with patch('cv2.VideoCapture', return_value=camera), patch.dict(sys.modules, {'predict':SimpleNamespace(FallPredictor=Predictor)}):
+            app = self.app()
+            next(b for b in app.button if b.label=='Bắt đầu giám sát').click().run()
+            try:
+                for _ in range(16):
+                    app.session_state['next_sample_at'] = 0
+                    app.run()
+                self.assertTrue(entered.wait(5))
+                future = app.session_state['analysis_future']
+                reads = camera.reads
+                for _ in range(5):
+                    app.run()
+                self.assertEqual(camera.reads, reads + 5)
+                self.assertIs(app.session_state['analysis_future'], future)
+                self.assertLessEqual(len(app.session_state['frames']), 16)
+                self.assertFalse(app.exception)
+                # Stop remains available even while inference is running.
+                next(b for b in app.button if b.label=='Dừng giám sát').click().run()
+                self.assertTrue(camera.released)
+                self.assertFalse(app.session_state['running'])
+            finally:
+                release.set()
+                pending = locals().get('future') or app.session_state.get('analysis_future')
+                if pending is not None:
+                    pending.result(timeout=10)
 
 if __name__ == '__main__':
     unittest.main()
