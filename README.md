@@ -111,7 +111,9 @@ Nếu cài thư viện thất bại, kiểm tra Python 3.11 64 bit và Internet.
 
 Kho Git có sẵn thư mục `data/processed/`, gồm các tệp metadata, danh sách chia tập `train.csv`, `val.csv`, `test.csv` và đặc trưng tư thế `.npy` trong `pose_features/`. Clone kho sẽ tải cả dữ liệu đã xử lý này. Có thể chạy `python view_npy.py` sau khi cài thư viện để xem đặc trưng của mẫu huấn luyện đầu tiên.
 
-**Video gốc được lưu riêng, không đưa lên GitHub. Link tải Google Drive: chưa được cung cấp.** Người chỉ chạy ứng dụng với mô hình có sẵn không cần tải bộ video huấn luyện.
+**Video gốc được lưu riêng, không đưa lên GitHub:** [Tải bộ video gốc trên Google Drive](https://drive.google.com/file/d/1tuyy3yE0Etby3pE-xpzCCM6shAxUUZ7H/view?usp=drive_link). Người chỉ chạy ứng dụng với mô hình có sẵn không cần tải bộ video huấn luyện.
+
+Mở link, tải bộ dữ liệu về rồi giải nén. Nếu Drive yêu cầu quyền truy cập, chủ sở hữu cần bật quyền xem cho người có đường liên kết để người tải kho mã nguồn có thể lấy dữ liệu.
 
 Khi nhận được bộ video, giải nén để có cấu trúc:
 
