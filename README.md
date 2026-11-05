@@ -1,32 +1,112 @@
-# An Tâm — Giám sát an toàn
+# FallGuard AI — Phát hiện té ngã
 
-Ứng dụng Streamlit có bốn màn hình:
-- **Giám sát trực tiếp:** webcam trên máy chạy ứng dụng (nguồn `0`) hoặc camera IP qua RTSP/HTTP; bắt đầu, dừng, phân tích các đoạn 32 khung hình và lưu lịch sử.
-- **Xem lại sự cố:** lọc ngày/kết quả, phát lại và tải video, đánh dấu đã kiểm tra.
-- **Báo cáo & thống kê:** số đoạn phân tích, cảnh báo, cảnh báo chưa kiểm tra, dữ liệu chưa đủ; biểu đồ theo ngày và xuất CSV.
-- **Tải video lên:** phân tích MP4, AVI, MOV và lưu kết quả cùng video.
+Ứng dụng Streamlit dùng YOLO11n-Pose để lấy tư thế người và LSTM để phân loại **Fall** (dấu hiệu té ngã) / **ADL** (hoạt động bình thường). Có hai chức năng: phân tích video tải lên và webcam trực tiếp. Mô hình đã có sẵn, không cần huấn luyện lại.
 
-## Tải và chạy trên máy khác
+## 1. Chuẩn bị
 
-Cài **Python 3.11 (64 bit)** và Git. Trên Windows, mở PowerShell rồi chạy:
+- Dùng **Windows 10/11 và Python 3.11 bản 64 bit** theo hướng dẫn này. Khi cài Python, chọn **Add python.exe to PATH**.
+- Cài Git để clone, hoặc tải ZIP từ GitHub.
+- Có Internet khi cài thư viện lần đầu; có webcam nếu muốn phân tích trực tiếp.
+- Không bắt buộc có GPU. Ứng dụng tự chọn CUDA nếu PyTorch nhận GPU tương thích; còn lại dùng CPU.
+
+Mở PowerShell và kiểm tra:
 
 ```powershell
-git clone https://github.com/nguyendinhkhuyen/DuAnPhatHienCanhBaoTeNga.git
-cd DuAnPhatHienCanhBaoTeNga
+python --version
+git --version
+```
+
+## 2. Tải dự án
+
+```powershell
+git clone https://github.com/Thiet-do-doc/Du_an_ai_te_nga.git
+cd Du_an_ai_te_nga
+```
+
+Nếu không dùng Git: chọn **Code → Download ZIP** trên GitHub, giải nén và mở PowerShell trong thư mục chứa `app.py` và `requirements.txt`.
+
+## 3. Cài thư viện
+
+Chạy lần lượt trong thư mục dự án:
+
+```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+Các lệnh dùng trực tiếp Python trong `.venv`, không cần kích hoạt môi trường hoặc đổi Execution Policy. Việc tải PyTorch có thể mất vài phút. Nếu có nhiều bản Python, dùng `py -3.11 -m venv .venv` ở bước tạo môi trường.
+
+Kiểm tra thư viện và nạp mô hình:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip check
+.\.venv\Scripts\python.exe -c "from predict import FallPredictor, DEVICE; FallPredictor(); print('Model OK | Device:', DEVICE)"
+```
+
+Lệnh thứ hai cần in `Model OK | Device: cpu` hoặc `Model OK | Device: cuda`. Đây là kiểm tra nạp mô hình, chưa kiểm chứng độ chính xác nhận diện.
+
+## 4. Chạy ứng dụng
+
+```powershell
 .\.venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-Mở địa chỉ `http://localhost:8501` nếu trình duyệt chưa tự mở. Các lần sau chỉ cần chạy lệnh cuối trong thư mục dự án. Nhấn `Ctrl+C` trong PowerShell để tắt ứng dụng.
+Mở [http://localhost:8501](http://localhost:8501) nếu trình duyệt chưa tự mở. Giữ PowerShell đang chạy, nhấn `Ctrl+C` để tắt.
 
-Nếu không dùng Git, chọn **Code → Download ZIP** trên GitHub, giải nén, mở PowerShell tại thư mục chứa `app.py`, rồi chạy các lệnh từ bước tạo `.venv` trở đi.
+**Lần chạy sau:** mở PowerShell trong thư mục dự án và chạy lại lệnh trên. Không cần tạo môi trường hay cài lại thư viện.
 
-Hai tệp mô hình trong `models/` đã có sẵn trong repo. Máy không có GPU NVIDIA vẫn có thể chạy bằng CPU, nhưng xử lý có thể chậm hơn. Lần cài đầu cần Internet để tải các thư viện.
+### Phân tích video
 
-Video và lịch sử phân tích trong `data/` không được đưa lên Git. Nếu muốn chuyển cả lịch sử cũ, sao chép riêng thư mục này sang máy mới.
+1. Chọn tab **Phân tích video**.
+2. Tải video MP4, AVI hoặc MOV, nên dùng đoạn ngắn thấy rõ toàn thân người.
+3. Nhấn **Phân tích video**, chờ kết quả và xem điểm Fall cùng tỷ lệ khung hình phát hiện người.
+4. Nếu không đủ dữ liệu tư thế, thử video có ánh sáng và góc quay tốt hơn.
 
-Video và cơ sở dữ liệu SQLite được lưu trong `data/` trên máy chạy ứng dụng. Các đoạn camera được mã hóa H.264 để phát lại trong trình duyệt. Video tải lên cần có codec được trình duyệt hỗ trợ để xem trực tiếp.
+Ứng dụng lấy mẫu 32 khung hình trên toàn video và trả một kết quả chung, chưa xác định thời điểm té ngã trong video dài. Video được lưu tạm để phân tích rồi xóa. Giao diện hiện chưa lưu lịch sử hoặc xuất báo cáo.
 
-Camera giám sát chỉ chạy khi màn hình Giám sát trực tiếp đang mở; chuyển sang mục khác sẽ dừng camera. Nhấn Dừng trước khi đóng trang. Đây không phải dịch vụ giám sát chạy nền. Mỗi đoạn được phân tích gồm 32 khung hình lấy theo tốc độ xử lý; video phát lại ở 5 fps nên không thể dùng thời lượng phát lại để đo thời gian thực. Mô hình hiện phân tích người có khung bao lớn nhất; không theo dõi từng người riêng biệt. Số cảnh báo là số đoạn video, không phải số sự cố độc lập. AI hỗ trợ phát hiện dấu hiệu té ngã và cần người kiểm tra lại.
+### Webcam trực tiếp
+
+1. Chọn tab **Webcam trực tiếp** và nhấn **Bật webcam**.
+2. Đứng trong khung hình để camera thấy toàn thân, chờ thu thập dữ liệu.
+3. Nhấn **Tắt webcam** trước khi đóng ứng dụng.
+
+Webcam hiện dùng DirectShow của **Windows**, lấy camera mặc định có chỉ số `0` trên **máy chạy Python**. Khi truy cập từ máy khác, ứng dụng không lấy webcam của trình duyệt máy đó. Cảnh báo trên giao diện kích hoạt sau 3 dự đoán Fall liên tiếp; chưa có gửi email/SMS.
+
+## 5. Cấu trúc chính
+
+```text
+Du_an_ai_te_nga/
+├── app.py                  # Giao diện Streamlit
+├── predict.py              # Trích xuất tư thế và dự đoán video
+├── webcam.py               # Phân tích webcam
+├── model.py                # Kiến trúc và hàm nạp LSTM
+├── requirements.txt        # Thư viện ứng dụng
+├── models/
+│   ├── best_lstm.pt         # Trọng số LSTM
+│   └── yolo11n-pose.pt      # Trọng số YOLO-Pose
+└── .streamlit/config.toml   # Cấu hình giao diện
+```
+
+Hai tệp `.pt` đã có trong GitHub; giữ đúng tên và vị trí. Không cần tải dữ liệu huấn luyện để chạy ứng dụng.
+
+Kho còn có `main.py`, `src/`, `config/`, `tests/` và `docs/` từ bộ khung tích hợp. `python main.py --demo` chạy dữ liệu **giả lập**, không chạy mô hình nhận diện thật. Để chạy giao diện này, cài **requirements.txt** và dùng **streamlit run app.py**.
+
+## 6. Khắc phục lỗi
+
+| Lỗi | Cách xử lý |
+| --- | --- |
+| Không tìm thấy Python | Cài Python 3.11 64 bit, bật PATH và mở lại PowerShell; hoặc thử `py -3.11`. |
+| Không tìm thấy Git | Cài Git và mở lại PowerShell, hoặc tải ZIP. |
+| `No module named ...` | Cài lại `requirements.txt` bằng Python trong `.venv`, dùng đúng lệnh chạy ở bước 4. |
+| Thiếu mô hình | Kiểm tra `models/best_lstm.pt` và `models/yolo11n-pose.pt`, tải lại từ kho nếu thiếu. |
+| Không mở được webcam | Đóng Camera/Teams/Zoom, cho phép ứng dụng desktop truy cập Camera trong cài đặt quyền riêng tư Windows. Nếu có nhiều camera, thử đổi chỉ số `0` trong `cv2.VideoCapture` ở `app.py` thành `1`. |
+| Không đọc được video | Thử MP4 dùng codec H.264 và kiểm tra tệp không bị hỏng. |
+| Cổng 8501 đang được dùng | Thêm `--server.port 8502` vào lệnh chạy rồi mở `http://localhost:8502`. |
+| Xử lý chậm, webcam chưa có kết quả | Thử video ngắn trước, đóng ứng dụng nặng và cải thiện ánh sáng. CPU chậm có thể chưa thu đủ khung hình trong cửa sổ thời gian của webcam. |
+
+Nếu cài thư viện thất bại, kiểm tra Python 3.11 64 bit và Internet. Thư viện hiện chưa được khóa toàn bộ phiên bản. Khi báo lỗi, gửi nội dung lỗi cùng kết quả `python --version` và `.\.venv\Scripts\python.exe -m pip freeze` để đối chiếu môi trường.
+
+## Giới hạn
+
+Mô hình chọn người có khung bao lớn nhất, chưa theo dõi từng người riêng biệt. Kết quả cần người kiểm tra lại. Ứng dụng phục vụ nghiên cứu và trình diễn, không thay thế hệ thống cảnh báo an toàn đã được kiểm chứng.
