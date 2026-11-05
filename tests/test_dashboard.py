@@ -32,7 +32,7 @@ class DashboardTests(unittest.TestCase):
     def test_four_pages_and_empty_history(self):
         app = self.app()
         self.assertEqual(len(app.sidebar.radio[0].options), 4)
-        for page in app.sidebar.radio[0].options:
+        for page in ['Giám sát trực tiếp', 'Xem lại sự cố', 'Thống kê an toàn', 'Tải video lên']:
             app.sidebar.radio[0].set_value(page).run()
             self.assertFalse(app.exception)
             self.assertTrue(any(t.value == page for t in app.title))
@@ -90,6 +90,8 @@ class DashboardTests(unittest.TestCase):
                 app.run()
             self.assertFalse(app.exception)
             self.assertTrue(any('CẢNH BÁO TÉ NGÃ' in m.value for m in app.markdown))
+            self.assertTrue(any('camera-alert' in m.value and 'aria-live="assertive"' in m.value for m in app.markdown))
+            self.assertGreater(app.session_state['alert_until'], 0)
             rows = storage.records()
             self.assertTrue(rows)
             self.assertTrue(Path(rows[0]['video']).is_file())

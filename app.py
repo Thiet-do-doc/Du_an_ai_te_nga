@@ -10,7 +10,7 @@ import streamlit as st
 
 from storage import ROOT, records, save_result, mark_reviewed
 
-st.set_page_config(page_title='An Tâm • Giám sát an toàn', page_icon='◉', layout='wide', initial_sidebar_state='expanded')
+st.set_page_config(page_title='An Tâm • Giám sát an toàn', page_icon='🛡️', layout='wide', initial_sidebar_state='expanded')
 st.markdown("""<style>
 :root {color-scheme:light}
 .stApp {background:#f3f3f2;color:#272b30}
@@ -33,6 +33,9 @@ h2,h3 {color:#30343a;letter-spacing:-.02em}
 [data-testid="stFileUploader"] {background:#fff;border:1px dashed #bac0c6;border-radius:14px;padding:14px}
 .live-alert {background:#fff0f0;border:2px solid #d74343;border-left:8px solid #c53535;border-radius:14px;padding:22px 24px;margin:16px 0;color:#932020;box-shadow:0 4px 18px #9a202010}
 .live-alert strong {display:block;font-size:1.5rem;margin-bottom:6px}
+.camera-alert {background:#b4232e;color:#fff;border:2px solid #941c26;box-shadow:0 4px 22px #b4232e30}
+.stApp:has(.camera-alert) {background:#fff1f1}
+[data-testid="stMain"]:has(.camera-alert) {box-shadow:inset 0 0 0 5px #c53535}
 .page-kicker {color:#747b82;font-size:.78rem;font-weight:700;letter-spacing:.12em;margin-bottom:8px}
 </style>""", unsafe_allow_html=True)
 
@@ -60,13 +63,22 @@ def stop_camera():
     st.session_state['running'] = False
     st.session_state.pop('frames', None)
     st.session_state.pop('frame_times', None)
+    st.session_state.pop('alert_until', None)
+
+
+def compact_video(video):
+    # Center media in a column occupying 45% of the available content width.
+    _, media, _ = st.columns([0.275, 0.45, 0.275])
+    with media:
+        st.video(video)
 
 
 with st.sidebar:
-    st.title('◉ An Tâm')
+    st.title('🛡️ An Tâm')
     st.caption('An toàn mỗi ngày, an tâm mỗi lúc.')
     st.divider()
-    page = st.radio('Chức năng', ['Giám sát trực tiếp', 'Xem lại sự cố', 'Thống kê an toàn', 'Tải video lên'], label_visibility='collapsed')
+    navigation = {'Giám sát trực tiếp': '📹', 'Xem lại sự cố': '🎞️', 'Thống kê an toàn': '📊', 'Tải video lên': '📤'}
+    page = st.radio('Chức năng', list(navigation), format_func=lambda name: f'{navigation[name]}  {name}', label_visibility='collapsed')
     st.divider()
     st.caption('Dữ liệu được lưu trên máy chạy ứng dụng.')
     st.caption('Hãy kiểm tra tình trạng thực tế khi có cảnh báo.')
@@ -82,7 +94,7 @@ if page == 'Tải video lên':
     with st.container(border=True):
         uploaded = st.file_uploader('Video cần kiểm tra', type=['mp4', 'avi', 'mov'])
         if uploaded:
-            st.video(uploaded)
+            compact_video(uploaded)
             upload_key = (uploaded.name, uploaded.size)
             if st.session_state.get('upload_key') != upload_key:
                 st.session_state.pop('upload_result', None)
@@ -121,7 +133,7 @@ elif page == 'Giám sát trực tiếp':
                     if not cap.isOpened():
                         cap.release()
                         raise ValueError('Không kết nối được camera. Kiểm tra nguồn và quyền truy cập.')
-                    st.session_state.update(capture=cap, running=True, frames=[], frame_times=[], last_result=None)
+                    st.session_state.update(capture=cap, running=True, frames=[], frame_times=[], last_result=None, alert_until=0)
                     st.rerun()
             except Exception as exc:
                 st.error(str(exc))
@@ -141,7 +153,9 @@ elif page == 'Giám sát trực tiếp':
             return
         st.success('Đang giám sát • Camera đã kết nối')
         alert_area = st.container()
-        st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), use_container_width=True)
+        _, media, _ = st.columns([0.275, 0.45, 0.275])
+        with media:
+            image_area = st.empty()
         st.session_state.frames.append(frame)
         st.session_state.frame_times.append(time.monotonic())
         if len(st.session_state.frames) >= 16:
@@ -159,6 +173,8 @@ elif page == 'Giám sát trực tiếp':
                     writer.send(item.tobytes())
                 writer.close()
                 result = predictor().predict_video(path)
+                if result['label'] == 'Fall' and result['fall_score'] is not None:
+                    st.session_state.alert_until = time.monotonic() + 10
                 save_result(path, 'Camera trực tiếp', result)
                 st.session_state.last_result = result
             except Exception as exc:
@@ -166,11 +182,18 @@ elif page == 'Giám sát trực tiếp':
                 path.unlink(missing_ok=True)
                 stop_camera()
                 st.error(f'Giám sát đã dừng: {exc}')
-        if st.session_state.get('last_result'):
+        alert_active = time.monotonic() < st.session_state.get('alert_until', 0)
+        if alert_active:
+            with alert_area:
+                st.markdown('<div class="live-alert camera-alert" role="alert" aria-live="assertive"><strong>⚠ CẢNH BÁO TÉ NGÃ</strong>Hãy kiểm tra ngay người trong khu vực camera đang giám sát.</div>', unsafe_allow_html=True)
+            frame = frame.copy()
+            cv2.rectangle(frame, (0, 0), (frame.shape[1]-1, frame.shape[0]-1), (40, 40, 220), 8)
+        elif st.session_state.get('last_result'):
             with alert_area:
                 result_message(st.session_state.last_result)
         else:
             st.caption('Đang quan sát chuyển động. Kết quả sẽ xuất hiện sau đoạn ghi hình đầu tiên…')
+        image_area.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), use_container_width=True)
     live_view()
 
 else:
@@ -206,7 +229,7 @@ else:
                 with st.container(border=True):
                     video = Path(row['video'])
                     if video.is_file():
-                        st.video(str(video))
+                        compact_video(str(video))
                         st.download_button('Tải đoạn video', video.read_bytes(), file_name=video.name)
                     else:
                         st.warning('Tệp video không còn trên máy lưu trữ.')
