@@ -1,4 +1,5 @@
 import sys
+import time
 import io
 from threading import Event
 from concurrent.futures import Future
@@ -6,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 import streamlit as st
@@ -15,8 +16,29 @@ import storage
 
 APP = str(Path(__file__).resolve().parents[1] / 'app.py')
 
+class SteppedFeed:
+    """Advance one camera read per UI tick; the real reader runs independently."""
+    def __init__(self, capture):
+        self.capture = capture
+        self.frame = None
+        self.last_seen = time.monotonic()
+
+    def snapshot(self, after):
+        ok, frame = self.capture.read()
+        if ok and frame is not None and frame.size:
+            self.frame, self.last_seen = frame, time.monotonic()
+            return frame, self.last_seen, [(after + 1, int(self.last_seen * 1000), '')]
+        return self.frame, self.last_seen, []
+
+    def release(self):
+        self.capture.release()
+
+
 class DashboardTests(unittest.TestCase):
     def setUp(self):
+        feed_patch = patch('camera_feed.CameraFeed', SteppedFeed)
+        feed_patch.start()
+        self.addCleanup(feed_patch.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.root_patch = patch.object(storage, 'ROOT', Path(self.tmp.name))
         self.root_patch.start()
@@ -84,6 +106,40 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual([m.value for m in app.metric], ['2','1','0','0'])
         self.assertEqual(len(app.dataframe), 1)
 
+    def test_delete_selected_video_and_refresh_history(self):
+        result = dict(label='Fall', fall_score=.95, valid_frame_ratio=1.)
+        target = storage.ROOT / 'selected.mp4'
+        target.write_bytes(b'clip')
+        storage.save_result(target, 'Webcam', result)
+        storage.save_result(storage.ROOT / 'missing.mp4', 'Camera IP', result)
+        app = self.app()
+        app.sidebar.radio[0].set_value('Xem lại sự cố').run()
+        identifier = next(r['id'] for r in storage.records() if r['source'] == 'Webcam')
+        app.selectbox[1].set_value(identifier).run()
+        next(b for b in app.button if b.label == 'Xác nhận xóa').click().run()
+        self.assertFalse(app.exception)
+        self.assertFalse(target.exists())
+        self.assertEqual([r['source'] for r in storage.records()], ['Camera IP'])
+        next(b for b in app.button if b.label == 'Xác nhận xóa').click().run()
+        self.assertFalse(app.exception)
+        self.assertTrue(app.success)
+        self.assertFalse(storage.records())
+
+    def test_shared_video_and_failed_file_deletion(self):
+        video = storage.ROOT / 'shared.mp4'
+        video.write_bytes(b'clip')
+        result = dict(label='ADL', fall_score=.1, valid_frame_ratio=1.)
+        for source in ('one', 'two'):
+            storage.save_result(video, source, result)
+        first, second = storage.records()
+        storage.delete_record(first['id'])
+        self.assertTrue(video.exists())
+        with patch.object(Path, 'unlink', side_effect=PermissionError), self.assertRaises(PermissionError):
+            storage.delete_record(second['id'])
+        self.assertEqual(storage.records(), [second])
+        storage.delete_record(second['id'])
+        self.assertFalse(video.exists())
+
     def test_live_alert_video_saved_and_camera_stopped(self):
         class Capture:
             released = False
@@ -132,6 +188,39 @@ class DashboardTests(unittest.TestCase):
             app.sidebar.radio[0].set_value('Xem lại sự cố').run()
             self.assertTrue(capture.released)
             self.assertFalse(app.exception)
+
+    def test_camera_recovers_from_empty_reads_and_can_restart_after_timeout(self):
+        frame = np.zeros((64, 64, 3), dtype=np.uint8)
+        camera = Mock()
+        camera.read.side_effect = [(False, None), (True, frame), (True, frame[:0]),
+                                   (True, frame), (False, None), (False, None), (True, frame)]
+        with patch('cv2.VideoCapture', return_value=camera), patch.dict(
+                sys.modules, {'predict': SimpleNamespace(FallPredictor=object)}):
+            app = self.app()
+            app.button[0].click().run()
+            self.assertTrue(app.info)
+            app.run()
+            self.assertEqual(len(app.get('component_instance')), 1)
+            samples = len(app.session_state['frames'])
+            app.session_state['capture'].last_seen -= 1
+            app.run()
+            self.assertTrue(app.warning)
+            self.assertEqual(len(app.get('component_instance')), 1)
+            self.assertEqual(len(app.session_state['frames']), samples)
+            app.run()
+            self.assertFalse(app.warning)
+            camera.release.assert_not_called()
+            app.run()
+            app.session_state['capture'].last_seen -= 6
+            app.run()
+            self.assertFalse(app.exception)
+            self.assertTrue(app.error)
+            self.assertFalse(app.button[0].disabled)
+            camera.release.assert_called_once()
+            app.button[0].click().run()
+            self.assertTrue(app.session_state['running'])
+            self.assertEqual(len(app.get('component_instance')), 1)
+            app.button[1].click().run()
 
     def test_preview_keeps_updating_while_analysis_is_blocked(self):
         entered, release = Event(), Event()

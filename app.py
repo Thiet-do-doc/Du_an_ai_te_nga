@@ -1,3 +1,4 @@
+import sqlite3
 import uuid
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -7,9 +8,12 @@ from pathlib import Path
 import cv2
 import pandas as pd
 import streamlit as st
+from streamlit.components.v1 import declare_component
 
-from storage import ROOT, records, save_result, mark_reviewed
-from live_processing import analyze_clip
+from camera_feed import CameraFeed
+
+from storage import ROOT, records, save_result, mark_reviewed, delete_record
+from live_processing import analyze_clip, analyze_browser_clip
 
 st.set_page_config(page_title='An Tâm • Giám sát an toàn', page_icon='🛡️', layout='wide', initial_sidebar_state='expanded')
 st.markdown("""<style>
@@ -57,6 +61,13 @@ def result_message(result):
         st.caption('Kết quả hỗ trợ kiểm tra an toàn; hãy xác nhận tình trạng thực tế khi có cảnh báo.')
 
 
+CAMERA_RETRY_SECONDS = 5
+camera_preview = declare_component('camera_preview', path=str(Path(__file__).parent / 'camera_preview'))
+
+
+browser_camera = declare_component('browser_camera', path=str(Path(__file__).parent / 'browser_camera'))
+
+
 def stop_camera():
     capture = st.session_state.pop('capture', None)
     if capture is not None:
@@ -69,7 +80,8 @@ def stop_camera():
     st.session_state.pop('frames', None)
     st.session_state.pop('frame_times', None)
     st.session_state.pop('alert_until', None)
-    for key in ('last_result', 'camera_session', 'result_session', 'analysis_session'):
+    for key in ('last_result', 'camera_session', 'result_session', 'analysis_session',
+                'last_preview_id', 'analysis_error', 'native_webcam', 'last_browser_clip'):
         st.session_state.pop(key, None)
 
 
@@ -128,52 +140,74 @@ elif page == 'Giám sát trực tiếp':
     st.caption('Theo dõi hình ảnh trực tiếp và nhận cảnh báo trên màn hình khi có dấu hiệu té ngã.')
     with st.container(border=True):
         source = st.text_input('Nguồn camera', value='0', help='0 là webcam trên máy chạy ứng dụng. Có thể nhập địa chỉ RTSP hoặc HTTP của camera IP.', disabled=st.session_state.get('running', False))
-        st.caption('Webcam là camera của máy chủ chạy Streamlit, không phải camera của trình duyệt từ xa.')
+        host = st.context.headers.get('Host', '').split(':')[0].lower() if hasattr(st, 'context') else ''
+        local_webcam = source.strip() == '0' and host in ('localhost', '127.0.0.1')
+        if local_webcam:
+            st.caption('Webcam sẽ hiển thị ngay trong trình duyệt. Hãy cho phép sử dụng camera khi được hỏi.')
+        else:
+            st.caption('Nguồn hình ảnh được mở trên máy chạy ứng dụng.')
         left, right = st.columns(2)
         start = left.button('Bắt đầu giám sát', type='primary', disabled=st.session_state.get('running', False), use_container_width=True)
         if right.button('Dừng giám sát', disabled=not st.session_state.get('running', False), use_container_width=True):
             stop_camera()
             st.rerun()
         if start:
+            st.session_state.pop('camera_error', None)
             try:
                 with st.spinner('Đang chuẩn bị giám sát…'):
                     predictor()
-                    cap = cv2.VideoCapture(int(source) if source.isdigit() else source)
-                    if not cap.isOpened():
-                        cap.release()
-                        raise ValueError('Không kết nối được camera. Kiểm tra nguồn và quyền truy cập.')
-                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                    st.session_state.update(capture=cap, running=True, frames=[], frame_times=[], last_result=None, alert_until=0, next_sample_at=0, camera_session=uuid.uuid4().hex, result_session=None, analysis_session=None, analysis_future=None, analysis_executor=ThreadPoolExecutor(max_workers=1, thread_name_prefix='fall-analysis'))
+                    feed = None
+                    if not local_webcam:
+                        cap = cv2.VideoCapture(int(source) if source.isdigit() else source)
+                        if not cap.isOpened():
+                            cap.release()
+                            raise ValueError('Không kết nối được camera. Kiểm tra nguồn và quyền truy cập.')
+                        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                        if source.isdigit():
+                            cap.set(cv2.CAP_PROP_FPS, 30)
+                        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                        feed = CameraFeed(cap)
+                    st.session_state.update(capture=feed, native_webcam=local_webcam, last_browser_clip=0, last_preview_id=0, running=True, frames=[], frame_times=[], last_result=None, alert_until=0, next_sample_at=0, camera_session=uuid.uuid4().hex, result_session=None, analysis_session=None, analysis_future=None, analysis_executor=ThreadPoolExecutor(max_workers=1, thread_name_prefix='fall-analysis'))
                     st.rerun()
             except Exception as exc:
                 st.error(str(exc))
 
-    @st.fragment(run_every=0.05 if st.session_state.get('running') else None)
+    refresh = 0.5 if st.session_state.get('native_webcam') else 0.1
+
+    @st.fragment(run_every=refresh if st.session_state.get('running') else None)
     def live_view():
         if not st.session_state.get('running'):
+            if error := st.session_state.pop('camera_error', None):
+                st.error(error)
+                return
             st.info('Camera đang dừng. Chọn nguồn rồi nhấn Bắt đầu giám sát.')
             return
-        try:
-            ok, frame = st.session_state.capture.read()
-        except Exception:
-            ok, frame = False, None
-        if not ok:
-            stop_camera()
-            st.error('Mất kết nối camera. Nhấn Dừng giám sát hoặc tải lại trang để kết nối lại.')
-            return
-        st.success('Đang giám sát • Camera đã kết nối')
-        alert_area = st.container()
+        native = st.session_state.native_webcam
+        if not native:
+            frame, captured_at, packets = st.session_state.capture.snapshot(st.session_state.last_preview_id)
+            if packets:
+                st.session_state.last_preview_id = packets[-1][0]
+            age = time.monotonic() - captured_at
+            if age >= CAMERA_RETRY_SECONDS:
+                stop_camera()
+                st.session_state.camera_error = 'Camera không gửi hình trong 5 giây. Kiểm tra kết nối rồi nhấn Bắt đầu giám sát để thử lại.'
+                st.rerun()
+            if frame is None:
+                st.info('Đang chờ hình ảnh đầu tiên từ camera…')
+            elif age > 0.5:
+                st.warning('Camera đang gián đoạn. Đang hiển thị hình cuối cùng nhận được.')
+            else:
+                st.success('Đang giám sát • Camera đã kết nối')
         _, media, _ = st.columns([0.275, 0.45, 0.275])
-        with media:
-            image_area = st.empty()
+        alert_area = st.container()
         pending = st.session_state.get('analysis_future')
         if pending is not None and pending.done():
             st.session_state.analysis_future = None
             try:
                 if st.session_state.get('analysis_session') == st.session_state.get('camera_session'):
                     result = pending.result()
+                    st.session_state.pop('analysis_error', None)
                     st.session_state.last_result = result
                     st.session_state.result_session = st.session_state.camera_session
                     detected = (result['label'] == 'Fall'
@@ -182,20 +216,18 @@ elif page == 'Giám sát trực tiếp':
                                 and result['valid_frame_ratio'] >= 0.8)
                     st.session_state.alert_until = time.monotonic() + 10 if detected else 0
             except Exception as exc:
-                stop_camera()
-                st.error(f'Giám sát đã dừng: {exc}')
-                return
-
-        now = time.monotonic()
+                st.session_state.last_result = None
+                st.session_state.alert_until = 0
+                st.session_state.analysis_error = f'Lỗi phân tích đoạn vừa ghi: {exc}. Hệ thống sẽ thử lại ở đoạn tiếp theo.'
         # Keep only a rolling window of fresh samples while inference is busy.
         # Preview never waits for encoding/inference and old clips cannot queue up.
-        if now >= st.session_state.next_sample_at:
-            st.session_state.frames.append(frame.copy())
-            st.session_state.frame_times.append(now)
+        if not native and packets and captured_at >= st.session_state.next_sample_at:
+            st.session_state.frames.append(frame)
+            st.session_state.frame_times.append(captured_at)
             st.session_state.frames = st.session_state.frames[-16:]
             st.session_state.frame_times = st.session_state.frame_times[-16:]
-            st.session_state.next_sample_at = now + 0.2
-        if st.session_state.get('analysis_future') is None and len(st.session_state.frames) >= 16:
+            st.session_state.next_sample_at = captured_at + 0.2
+        if not native and st.session_state.get('analysis_future') is None and len(st.session_state.frames) >= 16:
             frames = st.session_state.frames
             timestamps = st.session_state.frame_times
             st.session_state.frames = []
@@ -207,20 +239,36 @@ elif page == 'Giám sát trực tiếp':
                           if st.session_state.get('result_session') == st.session_state.get('camera_session') else None)
         alert_active = (current_result is not None and current_result['label'] == 'Fall'
                         and time.monotonic() < st.session_state.get('alert_until', 0))
-        if alert_active:
+        if st.session_state.get('analysis_error'):
+            alert_area.warning(st.session_state.analysis_error)
+        elif alert_active:
             with alert_area:
                 st.markdown('<div class="live-alert camera-alert" role="alert" aria-live="assertive"><strong>⚠ CẢNH BÁO TÉ NGÃ</strong>Hãy kiểm tra ngay người trong khu vực camera đang giám sát.</div>', unsafe_allow_html=True)
-            frame = frame.copy()
-            cv2.rectangle(frame, (0, 0), (frame.shape[1]-1, frame.shape[0]-1), (40, 40, 220), 8)
         elif current_result and current_result['label'] != 'Fall':
             with alert_area:
                 result_message(current_result)
         else:
             st.caption('Đang quan sát chuyển động. Kết quả sẽ xuất hiện sau đoạn ghi hình đầu tiên…')
-        image_area.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels='RGB', output_format='JPEG', use_container_width=True)
+        with media:
+            if native:
+                clip = browser_camera(alert=alert_active, key=st.session_state.camera_session)
+                if clip and clip.get('error'):
+                    stop_camera()
+                    st.session_state.camera_error = clip['error']
+                    st.rerun()
+                if (clip and clip.get('sequence', 0) > st.session_state.last_browser_clip
+                        and st.session_state.analysis_future is None):
+                    st.session_state.last_browser_clip = clip['sequence']
+                    st.session_state.analysis_future = st.session_state.analysis_executor.submit(
+                        analyze_browser_clip, clip['samples'], predictor(), ROOT)
+                    st.session_state.analysis_session = st.session_state.camera_session
+            else:
+                camera_preview(frames=packets, alert=alert_active, key=st.session_state.camera_session)
     live_view()
 
 else:
+    if page == 'Xem lại sự cố' and st.session_state.pop('video_deleted', False):
+        st.success('Đã xóa bản ghi video khỏi lịch sử.')
     rows = records()
     st.caption('Kết quả thực tế từ video tải lên và các đoạn camera đã phân tích.')
     if not rows:
@@ -263,6 +311,16 @@ else:
                     elif st.button('Đánh dấu đã kiểm tra', type='primary'):
                         mark_reviewed(selected)
                         st.rerun()
+                    with st.popover('Xóa video'):
+                        st.write('Xóa video đã chọn và kết quả phân tích khỏi lịch sử?')
+                        if st.button('Xác nhận xóa', key=f'delete_{selected}'):
+                            try:
+                                delete_record(selected)
+                            except (OSError, sqlite3.Error) as exc:
+                                st.error(f'Chưa xóa được video: {exc}')
+                            else:
+                                st.session_state.video_deleted = True
+                                st.rerun()
         else:
             fall = df[df.label == 'Fall']
             a, b, c, d = st.columns(4)

@@ -13,12 +13,22 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 SEQ_LEN = 32
 
 
+def limit_cpu_threads(_predictor=None):
+    # YOLO resets PyTorch's thread count when it initializes the CPU backend.
+    # Keep compute capacity available for the camera and the browser.
+    if torch.get_num_threads() > 2:
+        torch.set_num_threads(2)
+
+
 class FallPredictor:
     def __init__(self):
         self._lock = RLock()
         self.pose_model = YOLO(
             str(BASE_DIR / "models" / "yolo11n-pose.pt")
         )
+        if DEVICE.type == "cpu":
+            limit_cpu_threads()
+            self.pose_model.add_callback("on_predict_start", limit_cpu_threads)
         self.lstm_model = load_lstm_model(
             BASE_DIR / "models" / "best_lstm.pt",
             DEVICE
@@ -40,11 +50,17 @@ class FallPredictor:
             0, total_frames - 1, SEQ_LEN
         ).astype(int)
 
+        # Short live clips repeat indices to fill the LSTM sequence. Run pose
+        # inference once per distinct frame, then restore the requested order.
+        unique_indices, positions = np.unique(indices, return_inverse=True)
         sequence = []
+        next_index = 0
 
         try:
-            for idx in indices:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
+            for idx in unique_indices:
+                if idx != next_index:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
+                next_index = idx + 1
                 success, frame = cap.read()
 
                 if not success:
@@ -97,7 +113,7 @@ class FallPredictor:
 
         features = np.asarray(sequence, dtype=np.float32)
 
-        return features
+        return features[positions]
 
     def predict_video(self, video_path):
         # The cached predictor can be used by background cameras and uploads.

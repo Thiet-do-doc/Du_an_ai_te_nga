@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="vi">
+<meta charset="utf-8">
+<style>
+* { box-sizing: border-box }
+body { margin: 0; font: 13px system-ui; color: #444 }
+canvas { width: 100%; height: auto; display: block; border-radius: 8px }
+canvas.alert { outline: 4px solid #c53535; outline-offset: -4px }
+output { display: block; margin-top: 4px }
+</style>
+<canvas width="640" height="480" aria-label="Hình ảnh camera trực tiếp"></canvas>
+<output></output>
+<script>
+const canvas = document.querySelector('canvas');
+const context = canvas.getContext('2d');
+const fps = document.querySelector('output');
+const queue = [];
+let lastId = 0, clockOffset;
+let count = 0, since = performance.now();
+const parentOrigin = document.referrer ? new URL(document.referrer).origin : '*';
+function send(type, data) {
+  parent.postMessage({isStreamlitMessage: true, type, ...data}, parentOrigin);
+}
+window.addEventListener('message', event => {
+  if (event.source !== parent || event.data.type !== 'streamlit:render') return;
+  const {frames, alert} = event.data.args;
+  canvas.classList.toggle('alert', alert);
+  for (const frame of frames) {
+    if (frame[0] <= lastId) continue;
+    lastId = frame[0];
+    const [id, stamp, jpeg] = frame;
+    const img = new Image();
+    img.src = 'data:image/jpeg;base64,' + jpeg;
+    queue.push({id, stamp, img});
+  }
+  if (queue.length > 6) queue.splice(0, queue.length - 6);
+  if (queue.length) {
+    const now = performance.now();
+    // Anchor camera timestamps to the browser clock with a short jitter buffer.
+    if (clockOffset === undefined || Math.abs(now - queue[0].stamp - clockOffset) > 160)
+      clockOffset = now - queue[0].stamp;
+  }
+});
+function paint(now) {
+  requestAnimationFrame(paint);
+  if (now - since >= 1000) {
+    fps.value = Math.round(count * 1000 / (now - since)) + ' FPS';
+    since = now;
+    count = 0;
+  }
+  let ready = -1;
+  for (let i = 0; i < queue.length; i++) {
+    const {stamp, img} = queue[i];
+    if (stamp + clockOffset > now + 4) break;
+    if (img.complete && img.naturalWidth) ready = i;
+  }
+  if (ready < 0) return;
+  const {img} = queue.splice(0, ready + 1).pop();
+  if (canvas.width !== img.width || canvas.height !== img.height) {
+    canvas.width = img.width;
+    canvas.height = img.height;
+  }
+  context.drawImage(img, 0, 0);
+  count++;
+}
+new ResizeObserver(() => send('streamlit:setFrameHeight', {height: document.body.offsetHeight})).observe(document.body);
+send('streamlit:componentReady', {apiVersion: 1});
+requestAnimationFrame(paint);
+</script>
+</html>

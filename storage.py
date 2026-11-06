@@ -35,6 +35,20 @@ def records():
         return [dict(row) for row in db.execute('SELECT * FROM analyses ORDER BY created DESC')]
 
 
+def delete_record(identifier):
+    with connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        row = db.execute('SELECT video FROM analyses WHERE id=?', (identifier,)).fetchone()
+        if row is None:
+            return
+        db.execute('DELETE FROM analyses WHERE id=?', (identifier,))
+        shared = db.execute('SELECT 1 FROM analyses WHERE video=? LIMIT 1', (row['video'],)).fetchone()
+        path = Path(row['video'])
+        if (not shared and path.resolve().parent == ROOT.resolve()
+                and path.suffix.lower() in {'.mp4', '.avi', '.mov'}):
+            path.unlink(missing_ok=True)
+
+
 def mark_reviewed(identifier):
     with connect() as db:
         db.execute('UPDATE analyses SET reviewed=1 WHERE id=?', (identifier,))
