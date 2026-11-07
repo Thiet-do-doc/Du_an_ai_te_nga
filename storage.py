@@ -52,3 +52,11 @@ def delete_record(identifier):
 def mark_reviewed(identifier):
     with connect() as db:
         db.execute('UPDATE analyses SET reviewed=1 WHERE id=?', (identifier,))
+
+
+def mark_many_reviewed(identifiers):
+    identifiers = list(identifiers)
+    if not identifiers:
+        return
+    with connect() as db:
+        db.executemany('UPDATE analyses SET reviewed=1 WHERE id=?', [(i,) for i in identifiers])

@@ -7,10 +7,15 @@ import torch
 from ultralytics import YOLO
 
 from model import load_lstm_model
+from fall_rules import posture_check
 
 BASE_DIR = Path(__file__).resolve().parent
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 SEQ_LEN = 32
+# Ngưỡng báo té ngã (0-1). Tăng lên nếu vẫn báo nhầm, giảm xuống nếu bỏ sót.
+FALL_THRESHOLD = 0.9
+# Cần thấy phần thân dưới (hông, đầu gối) thì mới kết luận, tránh nhầm khi chỉ giơ tay.
+MIN_LOWER_BODY_RATIO = 0.6
 
 
 def limit_cpu_threads(_predictor=None):
@@ -141,6 +146,16 @@ class FallPredictor:
                 "valid_frame_ratio": valid_frame_ratio
             }
 
+        lower = scores[:, 11:15] > 0.3
+        lower_ok = float((lower.sum(axis=1) >= 2).mean())
+
+        if lower_ok < MIN_LOWER_BODY_RATIO:
+            return {
+                "label": "Không đủ dữ liệu",
+                "fall_score": None,
+                "valid_frame_ratio": valid_frame_ratio
+            }
+
         tensor = torch.from_numpy(
             features
         ).unsqueeze(0).to(DEVICE)
@@ -149,8 +164,10 @@ class FallPredictor:
             logits = self.lstm_model(tensor)
             fall_score = torch.sigmoid(logits).item()
 
+        is_fall = fall_score >= FALL_THRESHOLD and posture_check(features)["ok"]
+
         return {
-            "label": "Fall" if fall_score >= 0.5 else "ADL",
+            "label": "Fall" if is_fall else "ADL",
             "fall_score": fall_score,
             "valid_frame_ratio": valid_frame_ratio
         }

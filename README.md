@@ -61,8 +61,8 @@ Mở [http://localhost:8501](http://localhost:8501) nếu trình duyệt chưa t
 Menu dọc bên trái có bốn mục:
 
 - **Giám sát trực tiếp:** nhập `0` cho webcam mặc định, hoặc địa chỉ camera IP, nhấn **Bắt đầu giám sát**. Ngay khi có kết quả phát hiện dấu hiệu ngã, cảnh báo đỏ xuất hiện phía trên hình ảnh, viền camera chuyển đỏ và nền màn hình chuyển hồng nhạt. Cảnh báo chỉ áp dụng cho phiên camera hiện tại, tự hết sau 10 giây nếu không được xác nhận lại và tắt ngay khi lượt phân tích tiếp theo là bình thường hoặc không đủ dữ liệu người. Khi dừng hoặc bật lại camera, cảnh báo cũ được xóa. Từng đoạn camera được lưu cùng kết quả để xem lại. Nhấn **Dừng giám sát** khi xong. Chuyển sang mục khác cũng dừng camera.
-- **Xem lại sự cố:** lọc khoảng ngày, cảnh báo hoặc bản ghi chưa kiểm tra; phát lại, tải video và đánh dấu đã kiểm tra.
-- **Thống kê an toàn:** xem số đoạn đã phân tích, cảnh báo, cảnh báo chưa kiểm tra, dữ liệu chưa đủ; xem biểu đồ theo ngày và tải báo cáo CSV.
+- **Xem lại sự cố:** lọc khoảng ngày, cảnh báo hoặc bản ghi chưa kiểm tra; sắp xếp theo mới nhất hoặc điểm nguy cơ cao nhất; xem mức nguy cơ, phát lại, tải video, đánh dấu đã kiểm tra (từng bản ghi hoặc hàng loạt).
+- **Thống kê an toàn:** xem số đoạn đã phân tích, cảnh báo, cảnh báo chưa kiểm tra, dữ liệu chưa đủ; tỷ lệ đã kiểm tra, điểm nguy cơ cao nhất, khung giờ nhiều cảnh báo nhất; biểu đồ theo ngày, theo giờ, theo nguồn và tải báo cáo CSV (có cột điểm nguy cơ).
 - **Tải video lên:** chọn MP4, AVI hoặc MOV, nhấn **Phân tích và lưu kết quả**. Video và kết quả được lưu để xem lại.
 
 Webcam thuộc máy đang chạy Python, không phải webcam trình duyệt từ xa. Giám sát hoạt động khi trang đang mở, không phải dịch vụ chạy nền. Hình camera được cập nhật với nhịp mục tiêu khoảng 20 hình/giây; tốc độ thực tế phụ thuộc máy, camera và trình duyệt. Nhận diện và mã hóa video chạy ở luồng nền, tách khỏi luồng hiển thị. Mỗi đoạn phân tích gồm 16 khung hình lấy mẫu khoảng 5 hình/giây và được lấy mẫu thành 32 bước khi nhận diện. Trong lúc xử lý, ứng dụng chỉ giữ cửa sổ 16 khung hình mới nhất, không xếp hàng video cũ. Cảnh báo xuất hiện sau khi đoạn ghi hình được phân tích, không phải ngay lập tức ở từng khung hình. CPU chậm có thể làm tăng độ trễ. Khi dừng camera, lượt phân tích đã bắt đầu có thể tiếp tục hoàn tất và lưu vào lịch sử. Chưa có gửi email/SMS.
@@ -128,3 +128,14 @@ Thư mục `data/raw/` tiếp tục bị Git bỏ qua để tránh đưa bộ vi
 ## Giới hạn
 
 Mô hình chọn người có khung bao lớn nhất, chưa theo dõi từng người riêng biệt. Kết quả cần người kiểm tra lại. Ứng dụng phục vụ nghiên cứu và trình diễn, không thay thế hệ thống cảnh báo an toàn đã được kiểm chứng.
+
+
+## Giảm báo nhầm (té ngã)
+
+Cảnh báo chỉ xuất hiện khi đủ 4 điều kiện:
+1. Điểm của mô hình LSTM từ `FALL_THRESHOLD` (0.9) trở lên (`predict.py`).
+2. Thấy phần thân dưới (hông, đầu gối) trong ít nhất 60% khung hình (`MIN_LOWER_BODY_RATIO`), nếu không ghi "Không đủ dữ liệu".
+3. Thân người nghiêng từ 50° trở lên hoặc khung bao người rộng hơn cao ở ít nhất một thời điểm (`fall_rules.py`). Giơ tay khi đứng thẳng không đạt điều kiện này.
+4. Giám sát trực tiếp: `CONFIRM_CLIPS` trong `app.py` (mặc định 1 đoạn). Không nên đặt 2 vì sau khi ngã người nằm yên nên đoạn kế tiếp thường không còn ra "té ngã".
+
+Đo trên dữ liệu có nhãn của dự án, điều kiện 3 giữ lại khoảng 93–97% ca ngã thật và loại phần lớn video sinh hoạt bình thường. Nếu bỏ sót ca ngã thì giảm các ngưỡng; nếu còn báo nhầm thì tăng.

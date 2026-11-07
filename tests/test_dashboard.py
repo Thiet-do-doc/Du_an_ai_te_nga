@@ -106,6 +106,15 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual([m.value for m in app.metric], ['2','1','0','0'])
         self.assertEqual(len(app.dataframe), 1)
 
+    def test_mark_many_reviewed(self):
+        result = dict(label='Fall', fall_score=.9, valid_frame_ratio=1.)
+        for name in ('a', 'b', 'c'):
+            storage.save_result(storage.ROOT / f'{name}.mp4', name, result)
+        ids = [r['id'] for r in storage.records()]
+        storage.mark_many_reviewed(ids[:2])
+        storage.mark_many_reviewed([])
+        self.assertEqual(sorted(r['reviewed'] for r in storage.records()), [0, 1, 1])
+
     def test_delete_selected_video_and_refresh_history(self):
         result = dict(label='Fall', fall_score=.95, valid_frame_ratio=1.)
         target = storage.ROOT / 'selected.mp4'

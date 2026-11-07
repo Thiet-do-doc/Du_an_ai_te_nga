@@ -12,7 +12,7 @@ from streamlit.components.v1 import declare_component
 
 from camera_feed import CameraFeed
 
-from storage import ROOT, records, save_result, mark_reviewed, delete_record
+from storage import ROOT, records, save_result, mark_reviewed, mark_many_reviewed, delete_record
 from live_processing import analyze_clip, analyze_browser_clip
 
 st.set_page_config(page_title='An Tâm • Giám sát an toàn', page_icon='🛡️', layout='wide', initial_sidebar_state='expanded')
@@ -25,8 +25,11 @@ h1 {font-size:2rem!important;letter-spacing:-.035em;font-weight:750!important}
 h2,h3 {color:#30343a;letter-spacing:-.02em}
 [data-testid="stSidebar"] {background:#e6e7e8;border-right:1px solid #d2d4d6;min-width:285px}
 [data-testid="stSidebar"] .block-container {padding-top:2rem}
-[data-testid="stSidebar"] [role="radiogroup"] {gap:10px}
-[data-testid="stSidebar"] [role="radiogroup"] label {background:#f1f2f3;border:1px solid transparent;padding:14px 16px;border-radius:12px;width:100%;transition:background .15s}
+[data-testid="stSidebar"] [data-testid="stRadio"],[data-testid="stSidebar"] [data-testid="stRadio"] div:has([role="radiogroup"]),[data-testid="stSidebar"] [role="radiogroup"] {width:100%!important}
+[data-testid="stSidebar"] [role="radiogroup"] {gap:6px;align-items:stretch!important}
+[data-testid="stSidebar"] [role="radiogroup"] label {display:flex!important;background:transparent;border:1px solid transparent;padding:13px 16px;border-radius:12px;width:100%!important;box-sizing:border-box;cursor:pointer;transition:background .15s}
+[data-testid="stSidebar"] [role="radiogroup"] label>div>div:first-child {display:none}
+[data-testid="stSidebar"] [role="radiogroup"] label:hover {background:#eef0f1}
 [data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked) {background:#fff;border-color:#b7bec4;box-shadow:0 2px 7px #242b3210}
 [data-testid="stSidebar"] [role="radiogroup"] label p {font-size:1rem;font-weight:600;color:#30363c}
 [data-testid="stMetric"] {background:#fff;border:1px solid #dfe1e3;border-radius:16px;padding:20px}
@@ -41,6 +44,11 @@ h2,h3 {color:#30343a;letter-spacing:-.02em}
 .camera-alert {background:#b4232e;color:#fff;border:2px solid #941c26;box-shadow:0 4px 22px #b4232e30}
 .stApp:has(.camera-alert) {background:#fff1f1}
 [data-testid="stMain"]:has(.camera-alert) {box-shadow:inset 0 0 0 5px #c53535}
+.insight {margin:6px 0 14px;background:#fff;border:1px solid #dfe1e3;border-radius:14px;padding:14px 18px;height:100%}
+.insight span {display:block;color:#626970;font-size:.82rem}
+.insight b {display:block;color:#272d33;font-size:1.25rem;margin-top:2px}
+.risk {display:inline-block;padding:3px 12px;border-radius:999px;font-size:.85rem;font-weight:700}
+.risk-high {background:#fde8e8;color:#9b1c1c}.risk-mid {background:#fff3d6;color:#8a5a00}.risk-low {background:#e4f3e8;color:#1f6b3a}.risk-none {background:#eceeef;color:#575e65}
 .page-kicker {color:#747b82;font-size:.78rem;font-weight:700;letter-spacing:.12em;margin-bottom:8px}
 </style>""", unsafe_allow_html=True)
 
@@ -61,7 +69,30 @@ def result_message(result):
         st.caption('Kết quả hỗ trợ kiểm tra an toàn; hãy xác nhận tình trạng thực tế khi có cảnh báo.')
 
 
+def risk_badge(score):
+    if score is None or pd.isna(score):
+        return '<span class="risk risk-none">Chưa đủ dữ liệu</span>'
+    if score >= .9:
+        return '<span class="risk risk-high">Nguy cơ rất cao</span>'
+    if score >= .7:
+        return '<span class="risk risk-high">Nguy cơ cao</span>'
+    if score >= .5:
+        return '<span class="risk risk-mid">Cần kiểm tra</span>'
+    return '<span class="risk risk-low">Bình thường</span>'
+
+
+def result_details(score, coverage):
+    if score is None or pd.isna(score):
+        st.metric('Độ phủ tư thế', f'{coverage:.0%}')
+        return
+    st.markdown(risk_badge(score), unsafe_allow_html=True)
+    a, b = st.columns(2)
+    a.metric('Điểm nguy cơ té ngã', f'{score:.0%}')
+    b.metric('Độ phủ tư thế', f'{coverage:.0%}')
+
+
 CAMERA_RETRY_SECONDS = 5
+CONFIRM_CLIPS = 1  # số đoạn liên tiếp cùng ra té ngã mới phát cảnh báo
 camera_preview = declare_component('camera_preview', path=str(Path(__file__).parent / 'camera_preview'))
 
 
@@ -81,7 +112,8 @@ def stop_camera():
     st.session_state.pop('frame_times', None)
     st.session_state.pop('alert_until', None)
     for key in ('last_result', 'camera_session', 'result_session', 'analysis_session',
-                'last_preview_id', 'analysis_error', 'native_webcam', 'last_browser_clip'):
+                'last_preview_id', 'analysis_error', 'native_webcam', 'last_browser_clip',
+                'session_clips', 'session_alerts', 'fall_streak'):
         st.session_state.pop(key, None)
 
 
@@ -132,7 +164,9 @@ if page == 'Tải video lên':
                     path.unlink(missing_ok=True)
                     st.error(f'Không thể phân tích video: {exc}')
             if 'upload_result' in st.session_state:
-                result_message(st.session_state['upload_result'])
+                shown = st.session_state['upload_result']
+                result_message(shown)
+                result_details(shown['fall_score'], shown['valid_frame_ratio'])
 
 elif page == 'Giám sát trực tiếp':
     if not st.session_state.get('running'):
@@ -212,9 +246,14 @@ elif page == 'Giám sát trực tiếp':
                     st.session_state.result_session = st.session_state.camera_session
                     detected = (result['label'] == 'Fall'
                                 and result['fall_score'] is not None
-                                and result['fall_score'] >= 0.5
+                                and result['fall_score'] >= 0.9
                                 and result['valid_frame_ratio'] >= 0.8)
-                    st.session_state.alert_until = time.monotonic() + 10 if detected else 0
+                    streak = st.session_state.get('fall_streak', 0) + 1 if detected else 0
+                    st.session_state.fall_streak = streak
+                    confirmed = streak >= CONFIRM_CLIPS
+                    st.session_state.alert_until = time.monotonic() + 10 if confirmed else 0
+                    st.session_state.session_clips = st.session_state.get('session_clips', 0) + 1
+                    st.session_state.session_alerts = st.session_state.get('session_alerts', 0) + int(confirmed)
             except Exception as exc:
                 st.session_state.last_result = None
                 st.session_state.alert_until = 0
@@ -244,11 +283,22 @@ elif page == 'Giám sát trực tiếp':
         elif alert_active:
             with alert_area:
                 st.markdown('<div class="live-alert camera-alert" role="alert" aria-live="assertive"><strong>⚠ CẢNH BÁO TÉ NGÃ</strong>Hãy kiểm tra ngay người trong khu vực camera đang giám sát.</div>', unsafe_allow_html=True)
+        elif current_result and current_result['label'] == 'Fall' and st.session_state.get('fall_streak', 0) == 1:
+            alert_area.info('Phát hiện dấu hiệu bất thường, đang xác nhận ở đoạn ghi hình tiếp theo…')
         elif current_result and current_result['label'] != 'Fall':
             with alert_area:
                 result_message(current_result)
         else:
             st.caption('Đang quan sát chuyển động. Kết quả sẽ xuất hiện sau đoạn ghi hình đầu tiên…')
+        if st.session_state.get('session_clips'):
+            last = st.session_state.get('last_result')
+            if last is None:
+                detail = ''
+            elif last['fall_score'] is None:
+                detail = ' • Đoạn gần nhất: chưa đủ dữ liệu (cần thấy cả người từ đầu đến chân)'
+            else:
+                detail = f" • Đoạn gần nhất: điểm té ngã {last['fall_score']:.0%}"
+            st.caption(f"Phiên này: {st.session_state.session_clips} đoạn đã phân tích • {st.session_state.get('session_alerts', 0)} cảnh báo{detail}")
         with media:
             if native:
                 clip = browser_camera(alert=alert_active, key=st.session_state.camera_session)
@@ -292,9 +342,17 @@ else:
                 df = df[df.label == 'Fall']
             elif choice == 'Chưa đủ dữ liệu':
                 df = df[df.score.isna()]
+            order = st.radio('Sắp xếp', ['Mới nhất', 'Điểm nguy cơ cao nhất'], horizontal=True)
+            if order == 'Điểm nguy cơ cao nhất':
+                df = df.sort_values('score', ascending=False, na_position='last')
             if df.empty:
                 st.info('Không có kết quả phù hợp với bộ lọc.')
             else:
+                waiting = df[df.reviewed == 0]
+                st.caption(f'{len(df)} bản ghi • {len(waiting)} chưa kiểm tra')
+                if len(waiting) > 1 and st.button(f'Đánh dấu {len(waiting)} bản ghi đang lọc là đã kiểm tra'):
+                    mark_many_reviewed(list(waiting['id']))
+                    st.rerun()
                 choices = {row['id']: row for row in df.to_dict('records')}
                 selected = st.selectbox('Chọn bản ghi để xem lại', list(choices), format_func=lambda key: f"{choices[key]['created'].replace('T', ' ')} • {choices[key]['source']} • {'Đã xem' if choices[key]['reviewed'] else 'Chưa xem'}")
                 row = choices[selected]
@@ -306,6 +364,7 @@ else:
                     else:
                         st.warning('Tệp video không còn trên máy lưu trữ.')
                     result_message(dict(fall_score=row['score'], label=row['label'], valid_frame_ratio=row['coverage']))
+                    result_details(row['score'], row['coverage'])
                     if row['reviewed']:
                         st.success('Đã kiểm tra bản ghi này.')
                     elif st.button('Đánh dấu đã kiểm tra', type='primary'):
@@ -332,13 +391,34 @@ else:
             if df.empty:
                 st.info('Không có dữ liệu trong khoảng ngày đã chọn.')
             else:
+                checked = len(fall) - int((fall.reviewed == 0).sum())
+                fall_hours = pd.to_datetime(fall['created']).dt.hour
+                peak = f'{int(fall_hours.mode()[0]):02d}:00' if len(fall) else '—'
+                c1, c2, c3 = st.columns(3)
+                c1.markdown(f'<div class="insight"><span>Đã kiểm tra</span><b>{checked / len(fall):.0%}</b></div>' if len(fall) else '<div class="insight"><span>Đã kiểm tra</span><b>—</b></div>', unsafe_allow_html=True)
+                c2.markdown(f'<div class="insight"><span>Điểm nguy cơ cao nhất</span><b>{fall.score.max():.0%}</b></div>' if len(fall) else '<div class="insight"><span>Điểm nguy cơ cao nhất</span><b>—</b></div>', unsafe_allow_html=True)
+                c3.markdown(f'<div class="insight"><span>Khung giờ nhiều cảnh báo nhất</span><b>{peak}</b></div>', unsafe_allow_html=True)
                 st.subheader('Cảnh báo theo ngày')
                 counts = df.assign(alert=(df.label == 'Fall').astype(int)).groupby('day')['alert'].sum()
                 st.bar_chart(counts, color='#687e8c')
-                report = df[['created', 'source', 'label', 'reviewed']].copy()
+                left, right = st.columns(2)
+                with left:
+                    st.subheader('Theo giờ trong ngày')
+                    by_hour = fall_hours.value_counts().reindex(range(24), fill_value=0).sort_index()
+                    st.bar_chart(by_hour, color='#b4232e')
+                with right:
+                    st.subheader('Theo nguồn')
+                    by_source = fall.groupby('source').size().sort_values(ascending=False)
+                    if by_source.empty:
+                        st.caption('Chưa có cảnh báo té ngã trong khoảng ngày đã chọn.')
+                    else:
+                        st.bar_chart(by_source, color='#687e8c')
+                report = df[['created', 'source', 'label', 'score', 'reviewed']].copy()
+                report['created'] = report['created'].str.replace('T', ' ')
                 report['label'] = report['label'].replace({'Fall': 'Cảnh báo té ngã', 'ADL': 'Không phát hiện té ngã'})
+                report['score'] = report['score'].map(lambda v: '—' if pd.isna(v) else f'{v:.0%}')
                 report['reviewed'] = report['reviewed'].map({0: 'Chưa kiểm tra', 1: 'Đã kiểm tra'})
-                report.columns = ['Thời gian', 'Nguồn', 'Kết quả', 'Trạng thái']
+                report.columns = ['Thời gian', 'Nguồn', 'Kết quả', 'Điểm nguy cơ', 'Trạng thái']
                 st.subheader('Chi tiết phân tích')
                 st.dataframe(report, hide_index=True, use_container_width=True)
                 st.download_button('Tải báo cáo CSV', report.to_csv(index=False).encode('utf-8-sig'), 'bao-cao-an-toan.csv', 'text/csv')
