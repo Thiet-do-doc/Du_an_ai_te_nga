@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="vi">
+<meta charset="utf-8">
+<style>
+body { margin: 0; color: #39444a; font: 14px system-ui }
+.preview { position: relative }
+canvas { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 8px }
+video { display: block; width: 100%; border-radius: 8px }
+video.alert { outline: 4px solid #c53535; outline-offset: -4px }
+output { display: block; margin-top: 4px }
+</style>
+<div class="preview"><video autoplay muted playsinline aria-label="Webcam trực tiếp"></video><canvas hidden aria-label="Hình cuối cùng từ webcam"></canvas></div>
+<output>Đang chờ quyền sử dụng webcam…</output>
+<script>
+const video = document.querySelector('video');
+const status = document.querySelector('output');
+const canvas = document.querySelector('canvas');
+const ctx = canvas.getContext('2d');
+const origin = document.referrer ? new URL(document.referrer).origin : '*';
+function send(type, args) {
+  parent.postMessage({isStreamlitMessage: true, type, ...args}, origin);
+}
+function report(value) {
+  send('streamlit:setComponentValue', {value, dataType: 'json'});
+}
+let stream, started = false, closed = false, lastTime = -1, lastSeen, lastSample = 0;
+let samples = [], sequence = 0, fpsSince, previousCount = 0;
+function closeCamera() {
+  closed = true;
+  stream?.getTracks().forEach(track => track.stop());
+}
+window.addEventListener('pagehide', closeCamera);
+function fail(message) {
+  closeCamera();
+  status.value = message;
+  report({error: message});
+}
+async function start() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({audio: false, video: {
+      width: {ideal: 640}, height: {ideal: 480}, frameRate: {ideal: 30}
+    }});
+    if (closed) { closeCamera(); return; }
+    stream.getVideoTracks()[0].addEventListener('ended', () => {
+      if (!closed) fail('Webcam đã ngắt kết nối. Kiểm tra camera rồi bấm Bắt đầu giám sát.');
+    });
+    video.srcObject = stream;
+    await video.play();
+    lastSeen = fpsSince = performance.now();
+    status.value = 'Webcam đã kết nối';
+    watch();
+  } catch (err) {
+    if (!closed) fail(err.name === 'NotAllowedError'
+      ? 'Trình duyệt chưa được phép dùng webcam. Hãy cho phép camera rồi bấm Bắt đầu giám sát.'
+      : 'Không mở được webcam. Kiểm tra kết nối và đóng ứng dụng khác đang dùng camera.');
+  }
+}
+function watch() {
+  if (closed) return;
+  const now = performance.now();
+  if (!stream.getVideoTracks()[0].muted && video.readyState >= 2 && video.currentTime !== lastTime && video.videoWidth) {
+    canvas.hidden = true;
+    lastTime = video.currentTime;
+    lastSeen = now;
+    if (now - lastSample >= 195) {
+      lastSample = now;
+      const w = Math.min(640, video.videoWidth);
+      const h = Math.max(1, Math.round(w * video.videoHeight / video.videoWidth));
+      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+      ctx.drawImage(video, 0, 0, w, h);
+      samples.push([now / 1000, canvas.toDataURL('image/jpeg', .80).split(',')[1]]);
+      if (samples.length === 16) {
+        report({sequence: ++sequence, samples});
+        samples = [];
+      }
+    }
+  }
+  if (now - lastSeen >= 5000) {
+    fail('Webcam không gửi hình trong 5 giây. Kiểm tra kết nối rồi bấm Bắt đầu giám sát.');
+    return;
+  }
+  if (now - lastSeen > 600) {
+    if (lastSample) canvas.hidden = false;
+    status.value = 'Webcam đang gián đoạn. Đang giữ hình cuối cùng.';
+  } else if (now - fpsSince >= 1000) {
+    const stats = video.getVideoPlaybackQuality?.();
+    if (stats) {
+      const count = stats.totalVideoFrames - stats.droppedVideoFrames;
+      status.value = Math.round((count - previousCount) * 1000 / (now - fpsSince)) + ' FPS';
+      previousCount = count;
+    } else status.value = 'Webcam đã kết nối';
+    fpsSince = now;
+  }
+  setTimeout(watch, 50);
+}
+window.addEventListener('message', e => {
+  if (e.source !== parent || e.data.type !== 'streamlit:render') return;
+  video.classList.toggle('alert', e.data.args.alert);
+  if (!started) { started = true; start(); }
+});
+new ResizeObserver(() => send('streamlit:setFrameHeight', {height: document.body.offsetHeight})).observe(document.body);
+send('streamlit:componentReady', {apiVersion: 1});
+</script>
+</html>

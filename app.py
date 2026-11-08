@@ -63,6 +63,8 @@ def result_message(result):
         st.warning('Chưa đủ dữ liệu tư thế để kết luận. Hãy kiểm tra góc quay và ánh sáng.')
     elif result['label'] == 'Fall':
         st.markdown('<div class="live-alert" role="alert"><strong>⚠ CẢNH BÁO TÉ NGÃ</strong>Phát hiện dấu hiệu té ngã. Hãy kiểm tra ngay người trong khu vực giám sát.</div>', unsafe_allow_html=True)
+    elif result['label'] == 'Lying':
+        st.warning('⚠ Phát hiện người vừa chuyển sang tư thế nằm. Hãy kiểm tra xem đó là nghỉ ngơi hay té ngã.')
     else:
         st.success('Không phát hiện dấu hiệu té ngã trong đoạn đã phân tích.')
     if result['fall_score'] is not None:
@@ -269,8 +271,8 @@ elif page == 'Giám sát trực tiếp':
         if not native and st.session_state.get('analysis_future') is None and len(st.session_state.frames) >= 16:
             frames = st.session_state.frames
             timestamps = st.session_state.frame_times
-            st.session_state.frames = []
-            st.session_state.frame_times = []
+            st.session_state.frames = frames[-8:]
+            st.session_state.frame_times = timestamps[-8:]
             st.session_state.analysis_future = st.session_state.analysis_executor.submit(
                 analyze_clip, frames, timestamps, predictor(), ROOT)
             st.session_state.analysis_session = st.session_state.camera_session
@@ -337,9 +339,11 @@ else:
             pending = st.checkbox('Chỉ xem bản ghi chưa kiểm tra')
             if pending:
                 df = df[df.reviewed == 0]
-            choice = st.selectbox('Hiển thị', ['Cảnh báo té ngã', 'Chưa đủ dữ liệu', 'Tất cả kết quả'])
+            choice = st.selectbox('Hiển thị', ['Cảnh báo té ngã', 'Nằm xuống (cần kiểm tra)', 'Chưa đủ dữ liệu', 'Tất cả kết quả'])
             if choice == 'Cảnh báo té ngã':
                 df = df[df.label == 'Fall']
+            elif choice == 'Nằm xuống (cần kiểm tra)':
+                df = df[df.label == 'Lying']
             elif choice == 'Chưa đủ dữ liệu':
                 df = df[df.score.isna()]
             order = st.radio('Sắp xếp', ['Mới nhất', 'Điểm nguy cơ cao nhất'], horizontal=True)
@@ -415,7 +419,7 @@ else:
                         st.bar_chart(by_source, color='#687e8c')
                 report = df[['created', 'source', 'label', 'score', 'reviewed']].copy()
                 report['created'] = report['created'].str.replace('T', ' ')
-                report['label'] = report['label'].replace({'Fall': 'Cảnh báo té ngã', 'ADL': 'Không phát hiện té ngã'})
+                report['label'] = report['label'].replace({'Fall': 'Cảnh báo té ngã', 'Lying': 'Nằm xuống – cần kiểm tra', 'ADL': 'Không phát hiện té ngã'})
                 report['score'] = report['score'].map(lambda v: '—' if pd.isna(v) else f'{v:.0%}')
                 report['reviewed'] = report['reviewed'].map({0: 'Chưa kiểm tra', 1: 'Đã kiểm tra'})
                 report.columns = ['Thời gian', 'Nguồn', 'Kết quả', 'Điểm nguy cơ', 'Trạng thái']

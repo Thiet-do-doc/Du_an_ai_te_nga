@@ -71,7 +71,7 @@ function watch() {
       samples.push([now / 1000, canvas.toDataURL('image/jpeg', .80).split(',')[1]]);
       if (samples.length === 16) {
         report({sequence: ++sequence, samples});
-        samples = [];
+        samples = samples.slice(8); // cửa sổ trượt: giữ 8 mẫu cuối để không cắt đôi cú ngã
       }
     }
   }
