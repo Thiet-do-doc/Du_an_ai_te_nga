@@ -7,7 +7,7 @@ import torch
 from ultralytics import YOLO
 
 from model import load_lstm_model
-from fall_rules import posture_check
+from fall_rules import posture_check, lying_check
 
 BASE_DIR = Path(__file__).resolve().parent
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -40,6 +40,11 @@ class FallPredictor:
         )
 
     def extract_keypoints(self, video_path):
+        # Giữ nguyên hàm cũ cho mã đang dùng; chỉ trả về keypoint.
+        return self.extract_pose(video_path)[0]
+
+    def extract_pose(self, video_path):
+        """Trả về (keypoint (32, 51), tỉ lệ rộng/cao khung bao người (32,))."""
         cap = cv2.VideoCapture(str(video_path))
 
         if not cap.isOpened():
@@ -59,6 +64,7 @@ class FallPredictor:
         # inference once per distinct frame, then restore the requested order.
         unique_indices, positions = np.unique(indices, return_inverse=True)
         sequence = []
+        box_aspects = []
         next_index = 0
 
         try:
@@ -82,6 +88,7 @@ class FallPredictor:
                 )[0]
 
                 points = np.zeros((17, 3), dtype=np.float32)
+                box_aspect = 0.0  # 0 nghĩa là không thấy người
 
                 if (
                     result.keypoints is not None
@@ -110,15 +117,20 @@ class FallPredictor:
 
                     points[:, :2] = xy
                     points[:, 2] = scores
+                    # Khung bao vẫn có khi YOLO mất khớp lúc người nằm.
+                    box = result.boxes.xywh[person_idx]
+                    box_aspect = float(box[2]) / max(float(box[3]), 1.0)
 
                 sequence.append(points.flatten())
+                box_aspects.append(box_aspect)
 
         finally:
             cap.release()
 
         features = np.asarray(sequence, dtype=np.float32)
+        aspects = np.asarray(box_aspects, dtype=np.float32)
 
-        return features[positions]
+        return features[positions], aspects[positions]
 
     def predict_video(self, video_path):
         # The cached predictor can be used by background cameras and uploads.
@@ -126,7 +138,7 @@ class FallPredictor:
             return self._predict_video(video_path)
 
     def _predict_video(self, video_path):
-        features = self.extract_keypoints(video_path)
+        features, box_aspects = self.extract_pose(video_path)
 
         if features.shape != (32, 51):
             raise ValueError("Dữ liệu keypoint không hợp lệ.")
@@ -136,7 +148,7 @@ class FallPredictor:
 
         scores = features.reshape(32, 17, 3)[:, :, 2]
         valid_frame_ratio = float(
-            (scores > 0.25).any(axis=1).mean()
+            ((scores > 0.25).any(axis=1) | (box_aspects > 0)).mean()
         )
 
         if valid_frame_ratio < 0.8:
@@ -148,8 +160,11 @@ class FallPredictor:
 
         lower = scores[:, 11:15] > 0.3
         lower_ok = float((lower.sum(axis=1) >= 2).mean())
+        pose = lying_check(features, box_aspects)
 
-        if lower_ok < MIN_LOWER_BODY_RATIO:
+        # Người nằm thì YOLO hay mất hông/đầu gối; khi đã thấy rõ là đang nằm
+        # thì không loại đoạn này vì thiếu thân dưới.
+        if lower_ok < MIN_LOWER_BODY_RATIO and not pose["lying"]:
             return {
                 "label": "Không đủ dữ liệu",
                 "fall_score": None,
@@ -166,8 +181,19 @@ class FallPredictor:
 
         is_fall = fall_score >= FALL_THRESHOLD and posture_check(features)["ok"]
 
+        # "Lying": vừa chuyển từ đứng/ngồi sang nằm nhưng LSTM chưa đủ chắc là té ngã.
+        # Chỉ cảnh báo mức "cần kiểm tra", không phải té ngã đã xác nhận.
+        if is_fall:
+            label = "Fall"
+        elif pose["lying"] and pose["was_upright"]:
+            label = "Lying"
+        else:
+            label = "ADL"
+
         return {
-            "label": "Fall" if is_fall else "ADL",
+            "label": label,
             "fall_score": fall_score,
-            "valid_frame_ratio": valid_frame_ratio
+            "valid_frame_ratio": valid_frame_ratio,
+            "lying": pose["lying"],
+            "was_upright": pose["was_upright"]
         }

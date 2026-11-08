@@ -139,3 +139,10 @@ Cảnh báo chỉ xuất hiện khi đủ 4 điều kiện:
 4. Giám sát trực tiếp: `CONFIRM_CLIPS` trong `app.py` (mặc định 1 đoạn). Không nên đặt 2 vì sau khi ngã người nằm yên nên đoạn kế tiếp thường không còn ra "té ngã".
 
 Đo trên dữ liệu có nhãn của dự án, điều kiện 3 giữ lại khoảng 93–97% ca ngã thật và loại phần lớn video sinh hoạt bình thường. Nếu bỏ sót ca ngã thì giảm các ngưỡng; nếu còn báo nhầm thì tăng.
+
+## Trạng thái "Nằm xuống – cần kiểm tra" (mới)
+
+Ngoài `Fall` (cảnh báo đỏ), `predict.py` có thêm nhãn `Lying` (cảnh báo vàng): đầu đoạn người còn đứng/ngồi thẳng, ~1,2 giây cuối thân nghiêng từ 60° hoặc khung bao rộng/cao từ 1,2 (`fall_rules.lying_check`), nhưng chưa đủ điều kiện `Fall`.
+- Không cần thấy chân; có dùng thêm khung bao YOLO khi mất khớp lúc người nằm.
+- Cửa sổ giám sát trượt, chồng lấn 50% (giữ 8 khung cuối) để cú ngã không bị cắt đôi giữa hai đoạn.
+- `Lying` không tính vào số ca té ngã trong thống kê; lọc riêng ở mục "Xem lại sự cố".
